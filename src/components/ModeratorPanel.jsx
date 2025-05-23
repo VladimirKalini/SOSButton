@@ -9,25 +9,25 @@ export function ModeratorPanel({ token, serverUrl = 'https://1fxpro.vip' }) {
   const [connections, setConnections] = useState([]);
 
   useEffect(() => {
-
-    socketRef.current = io(serverUrl, {
+    const socket = io(serverUrl, {
       auth: { token },
       transports: ['websocket']
     });
+    socketRef.current = socket;
 
 
-    socketRef.current.emit('join-room', 'moderators');
+    socket.emit('join-room', 'moderators');
 
 
-    socketRef.current.on('incoming-sos', async ({ offer, latitude, longitude, phone, id }) => {
+    socket.on('incoming-sos', async ({ offer, latitude, longitude, phone, id }) => {
       const connId = id || uuidv4();
-
       const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+
       peersRef.current[connId] = peer;
 
       peer.onicecandidate = ({ candidate }) => {
         if (candidate) {
-          socketRef.current.emit('ice-candidate', { candidate, id: connId });
+          socket.emit('ice-candidate', { candidate, id: connId });
         }
       };
 
@@ -43,22 +43,21 @@ export function ModeratorPanel({ token, serverUrl = 'https://1fxpro.vip' }) {
         { id: connId, phone, latitude, longitude, stream: null }
       ]);
 
-
       await peer.setRemoteDescription(offer);
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
-
-      socketRef.current.emit('sos-answer', { answer, id: connId });
+      socket.emit('sos-answer', { answer, id: connId });
     });
 
-    socketRef.current.on('ice-candidate', ({ candidate, id }) => {
+    socket.on('ice-candidate', ({ candidate, id }) => {
       const peer = peersRef.current[id];
       if (peer) peer.addIceCandidate(candidate).catch(console.error);
     });
 
     return () => {
-      socketRef.current.disconnect();
-      Object.values(peersRef.current).forEach(p => p.close());
+      socket.disconnect();
+      const peers = peersRef.current;
+      Object.values(peers).forEach(p => p.close());
     };
   }, [serverUrl, token]);
 
