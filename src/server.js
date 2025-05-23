@@ -3,7 +3,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const authRoutes = require('./src/routes/auth');  // ваши /api/register и /api/login
+const authRoutes = require('./routes/auth');
+
 
 const app = express();
 const httpServer = http.createServer(app);
