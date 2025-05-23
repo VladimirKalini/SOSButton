@@ -1,56 +1,57 @@
-// server.js
+// server.js (в корне вашего проекта)
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const authRoutes = require('./src/routes/auth');  // Подключаем маршруты аутентификации
+const authRoutes = require('./src/routes/auth');  // ваши /api/register и /api/login
 
 const app = express();
 const httpServer = http.createServer(app);
 
-// Middleware для парсинга JSON в теле запросов
+// 1) JSON-парсер для API
 app.use(express.json());
 
-// Маршруты API (регистрация, логин и т.д.)
+// 2) Подключаем API-маршруты
 app.use('/api', authRoutes);
 
-// Раздаём статические файлы React
+// 3) Статика React и SPA-роутинг
 app.use(express.static(path.join(__dirname, 'build')));
-
-// SPA-роутинг: все не-API-запросы отдаём index.html
 app.get('*', (req, res) => {
+  // Любой путь, не начинающийся с /api, отдадим index.html
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
 
-// Socket.IO
+// 4) Socket.IO для видеопотоков SOS
 const io = new Server(httpServer, {
   cors: { origin: '*' }
 });
 
-// Middleware для проверки JWT при WebSocket
+// JWT-middleware (пока заглушка)
 io.use((socket, next) => {
-  // TODO: проверить socket.handshake.auth.token
+  // const token = socket.handshake.auth.token;
+  // TODO: верифицировать токен, присвоить socket.data.role
   next();
 });
 
 io.on('connection', socket => {
-  // Присоединяем модератора в комнату
+  // Модератор заходит в комнату
   socket.on('join-room', room => {
     socket.join(room);
   });
 
   // Пользователь нажал SOS
-  socket.on('sos-offer', ({ offer, latitude, longitude, phone }) => {
-    socket.to('moderators').emit('incoming-sos', { offer, latitude, longitude, phone });
+  socket.on('sos-offer', ({ offer, latitude, longitude, phone, id }) => {
+    // Рассылаем всем в комнате moderators
+    socket.to('moderators').emit('incoming-sos', { offer, latitude, longitude, phone, id });
   });
 
-  // Обмен ICE-кандидатами
+  // ICE-кандидаты от клиента
   socket.on('ice-candidate', ({ candidate, id }) => {
     socket.to(id).emit('ice-candidate', candidate);
   });
 });
 
-// Запуск сервера
+// 5) Запуск сервера
 const PORT = process.env.PORT || 4000;
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
