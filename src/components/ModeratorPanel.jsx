@@ -1,38 +1,91 @@
 // src/components/ModeratorPanel.jsx
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { v4 as uuidv4 } from 'uuid';
 
-export function ModeratorPanel({ token }) {
-  const socket = io({ auth: { token } });
-  const videoRef = useRef();
-  const [alerts, setAlerts] = useState([]);
+export function ModeratorPanel({ token, serverUrl = 'https://1fxpro.vip' }) {
+  const socketRef = useRef(null);
+  const peersRef = useRef({});
+  const [connections, setConnections] = useState([]);
 
   useEffect(() => {
-    socket.emit('join-room', 'moderators');
-    socket.on('incoming-sos', async ({ offer, latitude, longitude, phone }) => {
-      setAlerts(a => [...a, { phone, latitude, longitude }]);
-      const peer = new RTCPeerConnection(/* конфиг SFU */);
-      peer.ontrack = e => { videoRef.current.srcObject = e.streams[0]; };
-      peer.onicecandidate = e => e.candidate && socket.emit('ice-candidate', e.candidate);
+
+    socketRef.current = io(serverUrl, {
+      auth: { token },
+      transports: ['websocket']
+    });
+
+
+    socketRef.current.emit('join-room', 'moderators');
+
+
+    socketRef.current.on('incoming-sos', async ({ offer, latitude, longitude, phone, id }) => {
+      const connId = id || uuidv4();
+
+      const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      peersRef.current[connId] = peer;
+
+      peer.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          socketRef.current.emit('ice-candidate', { candidate, id: connId });
+        }
+      };
+
+      peer.ontrack = ({ streams }) => {
+        const remoteStream = streams[0];
+        setConnections(prev => prev.map(c =>
+          c.id === connId ? { ...c, stream: remoteStream } : c
+        ));
+      };
+
+      setConnections(prev => [
+        ...prev,
+        { id: connId, phone, latitude, longitude, stream: null }
+      ]);
+
+
       await peer.setRemoteDescription(offer);
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
-      socket.emit('sos-answer', { answer });
+
+      socketRef.current.emit('sos-answer', { answer, id: connId });
     });
-    socket.on('ice-candidate', candidate => peer.addIceCandidate(candidate));
-  }, []);
+
+    socketRef.current.on('ice-candidate', ({ candidate, id }) => {
+      const peer = peersRef.current[id];
+      if (peer) peer.addIceCandidate(candidate).catch(console.error);
+    });
+
+    return () => {
+      socketRef.current.disconnect();
+      Object.values(peersRef.current).forEach(p => p.close());
+    };
+  }, [serverUrl, token]);
 
   return (
     <div>
-      <h2>Новые сигналы SOS:</h2>
-      <ul>
-        {alerts.map((a,i) =>
-          <li key={i}>
-            📞 {a.phone}, 📍{a.latitude.toFixed(5)}, {a.longitude.toFixed(5)}
-          </li>
-        )}
-      </ul>
-      <video ref={videoRef} autoPlay style={{width: '100%'}}></video>
+      <h2>Новые SOS-сигналы</h2>
+      {connections.map(conn => (
+        <div key={conn.id} style={{ marginBottom: '1.5rem' }}>
+          <div>
+            <strong>📞 {conn.phone}</strong><br />
+            <em>📍 {conn.latitude.toFixed(5)}, {conn.longitude.toFixed(5)}</em>
+          </div>
+          {conn.stream ? (
+            <video
+              style={{ width: '100%', maxWidth: '400px', marginTop: '0.5rem' }}
+              ref={videoEl => {
+                if (videoEl && !videoEl.srcObject) {
+                  videoEl.srcObject = conn.stream;
+                }
+              }}
+              autoPlay
+            />
+          ) : (
+            <p>Ожидание видео...</p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
