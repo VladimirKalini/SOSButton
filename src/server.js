@@ -1,4 +1,6 @@
 // server.js (в корне вашего проекта)
+require('debug').disable();
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
