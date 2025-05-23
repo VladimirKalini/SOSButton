@@ -4,7 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../authContext';
 
-export function LoginForm() {
+function LoginForm() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -99,3 +99,4 @@ export function LoginForm() {
     </form>
   );
 }
+export default LoginForm;
