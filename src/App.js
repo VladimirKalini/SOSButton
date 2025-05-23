@@ -2,7 +2,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { SOSButton } from './components/SOSButton';
-import { useAuth, AuthProvider } from './authContext';
+import { AuthProvider } from './authContext';
+import { useAuth } from './authContext';
 import Login from './components/Login';
 import Register from './components/Register';
 
