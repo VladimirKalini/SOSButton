@@ -12,6 +12,9 @@ mongoose.connect(mongoUri).then(() => console.log('MongoDB connected')).catch(er
   process.exit(1)
 })
 
+
+
+
 const app = express()
 const httpServer = http.createServer(app)
 
