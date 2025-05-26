@@ -1,7 +1,10 @@
 // src/routes/calls.js
-const express = require('express')
-const Sos     = require('../models/Sos')
-const router  = express.Router()
+const express     = require('express')
+const Sos         = require('../models/Sos')
+const requireAuth = require('../routes/auth')
+const router      = express.Router()
+
+router.use(requireAuth)
 
 router.get('/active', async (req, res) => {
   try {
@@ -10,7 +13,7 @@ router.get('/active', async (req, res) => {
       : { status: 'active', phone: req.user.phone }
     const active = await Sos.find(filter).sort({ createdAt: -1 })
     res.json(active)
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: 'Server error' })
   }
 })
@@ -25,7 +28,7 @@ router.post('/:id/cancel', async (req, res) => {
     sos.status = 'cancelled'
     await sos.save()
     res.json({ ok: true })
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: 'Server error' })
   }
 })
@@ -37,7 +40,7 @@ router.get('/history', async (req, res) => {
       : { phone: req.user.phone }
     const all = await Sos.find(filter).sort({ createdAt: -1 })
     res.json(all)
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: 'Server error' })
   }
 })
