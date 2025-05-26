@@ -19,7 +19,7 @@ function ProtectedApp() {
     <div style={{ padding: '2rem', textAlign: 'center' }}>
       <h1>SOS Alert</h1>
       <SOSButton token={token} userPhone={phone} />
-      <Dashboard  token={token} />
+      {user.role === 'moderator' && <Dashboard />}
     </div>
   );
 }
