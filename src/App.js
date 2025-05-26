@@ -5,7 +5,11 @@ import { AuthProvider, useAuth } from './authContext';
 import LoginForm from './components/Login';
 import Register from './components/Register';
 import { SOSButton } from './components/SOSButton';
+<<<<<<< HEAD
 import  Dashboard from './components/ModeratorDashboard/Dashboard';
+=======
+import Dashboard from './components/ModeratorDashboard/Dashboard';
+>>>>>>> eca4c215f7dc5ecd7418a961cb29ca0831257f49
 
 function ProtectedApp() {
   const { token, user } = useAuth();
