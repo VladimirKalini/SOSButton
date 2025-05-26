@@ -5,7 +5,7 @@ const path       = require('path');
 const mongoose   = require('mongoose');
 const { Server } = require('socket.io');
 
-const authRoutes  = require('./src/middleware/auth');
+const authRoutes  = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
 const Sos         = require('./src/models/Sos');
 
@@ -22,10 +22,8 @@ const app        = express();
 const httpServer = http.createServer(app);
 const io         = new Server(httpServer, { cors: { origin: '*' } });
 
-// делаем io доступным в роутах
 app.set('io', io);
 
-// JSON и статические
 app.use(express.json());
 app.use('/api', authRoutes);
 app.use('/api/calls', callsRoutes);
@@ -43,7 +41,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Socket.IO
 io.on('connection', socket => {
   socket.on('join-room', room => socket.join(room));
 
@@ -63,8 +60,6 @@ io.on('connection', socket => {
   socket.on('ice-candidate', ({ candidate, id }) => {
     socket.to(id).emit('ice-candidate', candidate);
   });
-
-  socket.on('disconnect', () => {});
 });
 
 const PORT = process.env.PORT || 4000;
