@@ -3,12 +3,8 @@ const express = require('express')
 const Sos     = require('../models/Sos')
 const router  = express.Router()
 
-// для всех /api/calls/* сначала middleware аутентификации
-// в server.js: app.use('/api/calls', requireAuth, callsRoutes)
-
 router.get('/active', async (req, res) => {
   try {
-    // если guard — все активные, иначе только свои
     const filter = req.user.role === 'guard'
       ? { status: 'active' }
       : { status: 'active', phone: req.user.phone }
@@ -23,7 +19,6 @@ router.post('/:id/cancel', async (req, res) => {
   try {
     const sos = await Sos.findById(req.params.id)
     if (!sos) return res.status(404).end()
-    // guard может отменять всё, обычный — только свой own
     if (req.user.role !== 'guard' && sos.phone !== req.user.phone) {
       return res.status(403).end()
     }
@@ -37,7 +32,6 @@ router.post('/:id/cancel', async (req, res) => {
 
 router.get('/history', async (req, res) => {
   try {
-    // guard видит всё, пользователь — только свои
     const filter = req.user.role === 'guard'
       ? {}
       : { phone: req.user.phone }
