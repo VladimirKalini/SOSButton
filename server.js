@@ -7,7 +7,7 @@ const path       = require('path')
 const mongoose   = require('mongoose')
 const { Server } = require('socket.io')
 
-const authRoutes  = require('./src/routes/auth')
+
 const callsRoutes = require('./src/routes/calls')
 const requireAuth = require('./src/middleware/auth')
 const Sos         = require('./src/models/Sos')
@@ -27,7 +27,7 @@ const io = new Server(httpServer, { cors: { origin: '*' } })
 
 app.set('io', io)
 app.use(express.json())
-app.use('/api', authRoutes)
+app.use('/api', requireAuth)
 app.use('/api/calls', requireAuth, callsRoutes)
 
 app.use(express.static(path.join(__dirname, 'build')))
