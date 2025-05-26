@@ -1,48 +1,79 @@
 // src/routes/calls.js
-const express     = require('express')
-const Sos         = require('../models/Sos')
-const requireAuth = require('./auth')
-const router      = express.Router()
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const Sos = require('../models/Sos');
+const { authMiddleware, roleMiddleware } = require('../middleware/auth');
 
-router.use(requireAuth)
+const router = express.Router();
 
-router.get('/active', async (req, res) => {
-  try {
-    const filter = req.user.role === 'guard'
-      ? { status: 'active' }
-      : { status: 'active', phone: req.user.phone }
-    const active = await Sos.find(filter).sort({ createdAt: -1 })
-    res.json(active)
-  } catch {
-    res.status(500).json({ message: 'Server error' })
+// Настройка multer для загрузки видео
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.resolve(__dirname, '../../uploads'));
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${req.params.id}${ext}`);
   }
-})
+});
+const upload = multer({ storage });
 
-router.post('/:id/cancel', async (req, res) => {
-  try {
-    const sos = await Sos.findById(req.params.id)
-    if (!sos) return res.status(404).end()
-    if (req.user.role !== 'guard' && sos.phone !== req.user.phone) {
-      return res.status(403).end()
+// Все маршруты требуют авторизации
+router.use(authMiddleware);
+
+// Получить список активных (не отменённых) вызовов — только модератор
+router.get('/active', roleMiddleware('moderator'), async (req, res) => {
+  const calls = await Sos.find({ canceled: false }).sort('-createdAt');
+  res.json(calls);
+});
+
+// Отменить вызов по ID — только модератор
+router.post('/:id/cancel', roleMiddleware('moderator'), async (req, res) => {
+  const sos = await Sos.findByIdAndUpdate(
+    req.params.id,
+    { canceled: true },
+    { new: true }
+  );
+  if (!sos) {
+    return res.status(404).json({ message: 'SOS-вызов не найден' });
+  }
+  // Уведомляем пользователя об отмене (через Socket.IO)
+  req.app.get('io').to(sos.sosId).emit('sos-canceled');
+  res.json(sos);
+});
+
+// Журнал всех вызовов с пагинацией — только модератор
+router.get('/history', roleMiddleware('moderator'), async (req, res) => {
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 50;
+  const calls = await Sos.find()
+    .sort('-createdAt')
+    .skip((page - 1) * limit)
+    .limit(limit);
+  res.json(calls);
+});
+
+// Загрузка видео от пользователя по ID вызова — роль user (или выше)
+router.post(
+  '/:id/video',
+  roleMiddleware('user'),
+  upload.single('video'),
+  async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Файл не был загружен' });
     }
-    sos.status = 'cancelled'
-    await sos.save()
-    res.json({ ok: true })
-  } catch {
-    res.status(500).json({ message: 'Server error' })
+    const videoPath = `/uploads/${req.file.filename}`;
+    const sos = await Sos.findByIdAndUpdate(
+      req.params.id,
+      { videoPath },
+      { new: true }
+    );
+    if (!sos) {
+      return res.status(404).json({ message: 'SOS-вызов не найден' });
+    }
+    res.json({ message: 'Видео сохранено', videoPath });
   }
-})
+);
 
-router.get('/history', async (req, res) => {
-  try {
-    const filter = req.user.role === 'guard'
-      ? {}
-      : { phone: req.user.phone }
-    const all = await Sos.find(filter).sort({ createdAt: -1 })
-    res.json(all)
-  } catch {
-    res.status(500).json({ message: 'Server error' })
-  }
-})
-
-module.exports = router
+module.exports = router;
