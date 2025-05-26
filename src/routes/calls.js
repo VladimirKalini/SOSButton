@@ -1,7 +1,7 @@
 // src/routes/calls.js
 const express     = require('express')
 const Sos         = require('../models/Sos')
-const requireAuth = require('../middleware/auth')
+const requireAuth = require('./auth')
 const router      = express.Router()
 
 router.use(requireAuth)
