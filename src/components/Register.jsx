@@ -50,7 +50,7 @@ function Register() {
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
-            placeholder="+7 (___) ___-__-__"
+            placeholder=""
             required
             style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }}
           />
