@@ -3,6 +3,75 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
+const styles = {
+  page: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f4f6',
+    padding: '16px',
+    boxSizing: 'border-box',
+  },
+  form: {
+    width: '100%',
+    maxWidth: '400px',
+    backgroundColor: '#ffffff',
+    padding: '24px',
+    borderRadius: '12px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+    boxSizing: 'border-box',
+  },
+  header: {
+    fontSize: '24px',
+    fontWeight: '700',
+    marginBottom: '24px',
+    textAlign: 'center',
+  },
+  error: {
+    color: '#e53e3e',
+    marginBottom: '16px',
+    fontSize: '14px',
+  },
+  field: {
+    marginBottom: '16px',
+  },
+  label: {
+    display: 'block',
+    marginBottom: '4px',
+    fontSize: '14px',
+    fontWeight: '500',
+  },
+  input: {
+    width: '100%',
+    padding: '8px 12px',
+    fontSize: '14px',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e0',
+    outline: 'none',
+    boxSizing: 'border-box',
+  },
+  inputFocus: {
+    borderColor: '#3182ce',
+    boxShadow: '0 0 0 2px rgba(49,130,206,0.5)',
+  },
+  button: {
+    width: '100%',
+    padding: '12px',
+    fontSize: '16px',
+    fontWeight: '600',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    backgroundColor: '#e53e3e',
+  },
+  buttonDisabled: {
+    backgroundColor: '#a0aec0',
+    cursor: 'not-allowed',
+  },
+};
+
 export default function Register() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -32,25 +101,22 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-      <form
-        onSubmit={handleSubmit}
-        className="max-w-md w-full bg-white p-6 rounded-xl shadow-lg"
-      >
-        <h2 className="text-2xl font-bold mb-6 text-center">Регистрация</h2>
-        {error && <div className="text-red-500 mb-4">{error}</div>}
-        <div className="mb-4">
-          <label className="block text-sm font-medium mb-1">Телефон</label>
+    <div style={styles.page}>
+      <form onSubmit={handleSubmit} style={styles.form}>
+        <h2 style={styles.header}>Регистрация</h2>
+        {error && <div style={styles.error}>{error}</div>}
+        <div style={styles.field}>
+          <label style={styles.label}>Телефон</label>
           <input
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
             required
-            className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={styles.input}
           />
         </div>
-        <div className="mb-6">
-          <label className="block text-sm font-medium mb-1">Пароль</label>
+        <div style={styles.field}>
+          <label style={styles.label}>Пароль</label>
           <input
             type="password"
             value={password}
@@ -58,21 +124,20 @@ export default function Register() {
             placeholder="Минимум 6 символов"
             required
             minLength={6}
-            className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={styles.input}
           />
         </div>
         <button
           type="submit"
           disabled={loading}
-          className={`w-full py-3 rounded-lg font-semibold text-white ${
-            loading
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-red-600 hover:bg-red-700'
-          }`}
+          style={{
+            ...styles.button,
+            ...(loading ? styles.buttonDisabled : {}),
+          }}
         >
           {loading ? 'Регистрация…' : 'Зарегистрироваться'}
         </button>
       </form>
     </div>
-);
+  );
 }
