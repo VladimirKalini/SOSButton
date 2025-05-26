@@ -2,20 +2,17 @@
 import React, { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-export default function VideoStream({ offer, id }) {
+export default function VideoStream({ offer, id, serverUrl = 'https://1fxpro.vip' }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    const socket = io('https://1fxpro.vip', {
-      transports: ['websocket'],
-      auth: { token: localStorage.getItem('jwtToken') }
-    });
+    const token = localStorage.getItem('jwtToken');
+    const socket = io(serverUrl, { auth: { token }, transports: ['websocket'] });
+    socket.emit('join-room', id);
 
     const peer = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
-
-    socket.emit('join-room', id);
 
     peer.onicecandidate = ({ candidate }) => {
       if (candidate) {
@@ -23,17 +20,17 @@ export default function VideoStream({ offer, id }) {
       }
     };
 
-    peer.ontrack = ({ streams }) => {
+    peer.ontrack = ({ streams: [stream] }) => {
       if (videoRef.current && !videoRef.current.srcObject) {
-        videoRef.current.srcObject = streams[0];
+        videoRef.current.srcObject = stream;
       }
     };
 
     peer.setRemoteDescription(offer)
       .then(() => peer.createAnswer())
-      .then(answer => peer.setLocalDescription(answer))
-      .then(() => {
-        socket.emit('sos-answer', { answer: peer.localDescription, id });
+      .then(answer => {
+        peer.setLocalDescription(answer);
+        socket.emit('sos-answer', { answer, id });
       });
 
     socket.on('ice-candidate', ({ candidate }) => {
@@ -44,7 +41,7 @@ export default function VideoStream({ offer, id }) {
       peer.close();
       socket.disconnect();
     };
-  }, [offer, id]);
+  }, [offer, id, serverUrl]);
 
   return (
     <video
