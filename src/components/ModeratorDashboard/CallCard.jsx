@@ -1,3 +1,4 @@
+// src/components/ModeratorDashboard/CallCard.jsx
 import React from 'react';
 import VideoStream from './VideoStream';
 
