@@ -5,7 +5,7 @@ import { AuthProvider, useAuth } from './authContext';
 import LoginForm from './components/Login';
 import Register from './components/Register';
 import { SOSButton } from './components/SOSButton';
-import { ModeratorPanel } from './components/ModeratorDashboard/Dashboard';
+import Dashboard from './components/ModeratorDashboard/Dashboard';
 
 function ProtectedApp() {
   const { token, user } = useAuth();
@@ -19,7 +19,7 @@ function ProtectedApp() {
     <div style={{ padding: '2rem', textAlign: 'center' }}>
       <h1>SOS Alert</h1>
       <SOSButton token={token} userPhone={phone} />
-      <ModeratorPanel  token={token} />
+      <Dashboard  token={token} />
     </div>
   );
 }

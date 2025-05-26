@@ -7,7 +7,6 @@ const { authMiddleware, roleMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Настройка multer для загрузки видео
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, path.resolve(__dirname, '../../uploads'));
@@ -19,31 +18,24 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Все маршруты требуют авторизации
 router.use(authMiddleware);
 
-// Получить список активных (не отменённых) вызовов — только модератор
 router.get('/active', roleMiddleware('moderator'), async (req, res) => {
   const calls = await Sos.find({ canceled: false }).sort('-createdAt');
   res.json(calls);
 });
 
-// Отменить вызов по ID — только модератор
 router.post('/:id/cancel', roleMiddleware('moderator'), async (req, res) => {
   const sos = await Sos.findByIdAndUpdate(
     req.params.id,
     { canceled: true },
     { new: true }
   );
-  if (!sos) {
-    return res.status(404).json({ message: 'SOS-вызов не найден' });
-  }
-  // Уведомляем пользователя об отмене (через Socket.IO)
+  if (!sos) return res.status(404).json({ message: 'SOS-вызов не найден' });
   req.app.get('io').to(sos.sosId).emit('sos-canceled');
   res.json(sos);
 });
 
-// Журнал всех вызовов с пагинацией — только модератор
 router.get('/history', roleMiddleware('moderator'), async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 50;
@@ -54,7 +46,6 @@ router.get('/history', roleMiddleware('moderator'), async (req, res) => {
   res.json(calls);
 });
 
-// Загрузка видео от пользователя по ID вызова — роль user (или выше)
 router.post(
   '/:id/video',
   roleMiddleware('user'),
@@ -69,9 +60,7 @@ router.post(
       { videoPath },
       { new: true }
     );
-    if (!sos) {
-      return res.status(404).json({ message: 'SOS-вызов не найден' });
-    }
+    if (!sos) return res.status(404).json({ message: 'SOS-вызов не найден' });
     res.json({ message: 'Видео сохранено', videoPath });
   }
 );
