@@ -1,9 +1,13 @@
+// src/models/Sos.js
 const mongoose = require('mongoose');
-const schema = new mongoose.Schema({
-  phone:        { type: String, required: true },
-  latitude:     { type: Number, required: true },
-  longitude:    { type: Number, required: true },
-  offer:        { type: Object, required: true },
-  createdAt:    { type: Date, default: Date.now }
-});
-module.exports = mongoose.model('Sos', schema);
+
+const sosSchema = new mongoose.Schema({
+  phone:     String,
+  latitude:  Number,
+  longitude: Number,
+  offer:     Object,
+  sosId:     String,
+  status:    { type: String, default: 'active' }
+}, { timestamps: true });
+
+module.exports = mongoose.model('Sos', sosSchema);
