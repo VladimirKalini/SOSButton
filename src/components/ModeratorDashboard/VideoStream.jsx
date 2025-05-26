@@ -1,4 +1,3 @@
-// src/components/ModeratorDashboard/VideoStream.jsx
 import React, { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
@@ -15,11 +14,8 @@ export default function VideoStream({ offer, id, serverUrl = 'https://1fxpro.vip
     });
 
     peer.onicecandidate = ({ candidate }) => {
-      if (candidate) {
-        socket.emit('ice-candidate', { candidate, id });
-      }
+      if (candidate) socket.emit('ice-candidate', { candidate, id });
     };
-
     peer.ontrack = ({ streams: [stream] }) => {
       if (videoRef.current && !videoRef.current.srcObject) {
         videoRef.current.srcObject = stream;
