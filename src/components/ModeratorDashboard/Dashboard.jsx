@@ -37,3 +37,4 @@ export default function Dashboard() {
     </div>
   );
 }
+export { default as ModeratorPanel } from "./Dashboard";
