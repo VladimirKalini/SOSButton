@@ -9,7 +9,7 @@ const { Server } = require('socket.io')
 
 const authRoutes  = require('./src/routes/auth')
 const callsRoutes = require('./src/routes/calls')
-const requireAuth = require('./src/routes/auth')
+const requireAuth = require('./src/middleware/auth')
 const Sos         = require('./src/models/Sos')
 
 const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/sos-app'
