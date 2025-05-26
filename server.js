@@ -19,7 +19,8 @@ mongoose
     console.error(err);
     process.exit(1);
   });
-
+const requireAuth = require('./src/middleware/auth');
+app.use('/api/calls', requireAuth, callsRoutes);
 const app        = express();
 const httpServer = http.createServer(app);
 const io         = new Server(httpServer, { cors: { origin: '*' } });

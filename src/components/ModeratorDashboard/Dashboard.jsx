@@ -9,31 +9,48 @@ export default function Dashboard() {
 
   useEffect(() => {
     const token = localStorage.getItem('jwtToken');
-    // 1) Сначала загрузить текущие активные
-    axios.get('/api/calls/active', { headers: { Authorization: `Bearer ${token}` } })
+
+    // 1) Загрузить текущие активные SOS
+    axios
+      .get('/api/calls/active', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
       .then(resp => setCalls(resp.data))
       .catch(console.error);
 
-    // 2) Подключиться к сокету
+    // 2) Подписаться на новые через Socket.IO
     const socket = io('https://1fxpro.vip', {
       auth: { token },
       transports: ['websocket']
     });
-    // присоединяемся к “модераторской” комнате
-    socket.emit('join-room', 'moderators');
 
-    // слушаем новые SOS
+    socket.emit('join-room', 'moderators');
     socket.on('incoming-sos', sos => {
-      setCalls(prev => [sos, ...prev]);
+      const normalized = {
+        ...sos,
+        _id: sos.id,
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+      setCalls(prev => [normalized, ...prev]);
     });
 
     return () => socket.disconnect();
   }, []);
 
+  // отмена SOS
   const handleCancel = async id => {
     const token = localStorage.getItem('jwtToken');
-    await axios.post(`/api/calls/${id}/cancel`, {}, { headers: { Authorization: `Bearer ${token}` } });
-    setCalls(prev => prev.filter(c => c._id !== id));
+    try {
+      await axios.post(
+        `/api/calls/${id}/cancel`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setCalls(prev => prev.filter(c => c._id !== id));
+    } catch (err) {
+      console.error('Cancel SOS error:', err);
+    }
   };
 
   return (
@@ -43,15 +60,23 @@ export default function Dashboard() {
       {calls.map(call => (
         <CallCard key={call._id} call={call} onCancel={handleCancel} />
       ))}
-      <h3 style={{ marginTop: 32 }}>История вызовов</h3>
-<ul>
-  {calls.map(c =>
-    <li key={c._id}>
-      {new Date(c.createdAt).toLocaleString()} — {c.phone} — {c.status}
-    </li>
-  )}
-</ul>
+
+      <h3 style={{ marginTop: 32, marginBottom: 8 }}>История вызовов</h3>
+      <ul style={{ listStyle: 'none', padding: 0 }}>
+        {calls.map(c => (
+          <li
+            key={c._id}
+            style={{
+              padding: '8px',
+              borderBottom: '1px solid #eee',
+              opacity: c.status === 'active' ? 1 : 0.6
+            }}
+          >
+            {new Date(c.createdAt).toLocaleString()} — {c.phone} —{' '}
+            <strong>{c.status}</strong>
+          </li>
+        ))}
+      </ul>
     </div>
-    
   );
 }
