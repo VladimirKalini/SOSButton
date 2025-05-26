@@ -36,10 +36,14 @@ router.post('/login', async (req, res) => {
 
   const { phone, password } = value
   const user = await User.findOne({ phone }).select('+passwordHash')
-  if (!user) return res.status(401).json({ message: 'Неверный номер или пароль' })
+  if (!user) {
+    return res.status(401).json({ message: 'Неверный номер или пароль' })
+  }
 
   const valid = await bcrypt.compare(password, user.passwordHash)
-  if (!valid) return res.status(401).json({ message: 'Неверный номер или пароль' })
+  if (!valid) {
+    return res.status(401).json({ message: 'Неверный номер или пароль' })
+  }
 
   const token = jwt.sign(
     { userId: user._id, phone: user.phone, role: user.role },
@@ -49,7 +53,11 @@ router.post('/login', async (req, res) => {
 
   res.json({
     token,
-    user: { id: user._id, phone: user.phone, role: user.role }
+    user: {
+      id: user._id,
+      phone: user.phone,
+      role: user.role
+    }
   })
 })
 
