@@ -4,7 +4,7 @@ import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 
 export default function MapView({ lat, lng }) {
   const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_KEY
+    googleMapsApiKey: process.env.AIzaSyBEa9adTA4gvPPd-F0OLG0Bh-YmefDpCN0
   });
 
   if (loadError) return <div>Ошибка загрузки карты</div>;

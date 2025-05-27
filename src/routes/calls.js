@@ -16,6 +16,7 @@ const storage = multer.diskStorage({
     // Создаем директорию, если она не существует
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
+      console.log('Создана директория для загрузки видео:', uploadsDir);
     }
     
     cb(null, uploadsDir);
@@ -23,11 +24,17 @@ const storage = multer.diskStorage({
   filename: function(req, file, cb) {
     const sosId = req.body.sosId;
     // Генерируем уникальное имя файла с временной меткой
-    cb(null, `${sosId}_${Date.now()}.webm`);
+    const filename = `${sosId}_${Date.now()}.webm`;
+    console.log(`Создание файла: ${filename}`);
+    cb(null, filename);
   }
 });
 
-const upload = multer({ storage: storage });
+// Настройка лимитов для загрузки файлов
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB максимальный размер файла
+});
 
 router.use(authMiddleware);
 
@@ -112,13 +119,23 @@ router.get('/history', roleMiddleware('guard'), async (req, res) => {
 // Запись видео с устройства пользователя
 router.post('/record', upload.single('videoChunk'), async (req, res) => {
   try {
+    console.log('Получен запрос на запись видео');
+    
+    if (!req.file) {
+      console.error('Файл не был загружен');
+      return res.status(400).json({ message: 'Файл не был загружен' });
+    }
+    
     const { sosId } = req.body;
+    console.log(`Обработка видео для SOS ID: ${sosId}, файл: ${req.file.filename}`);
+    
     const sos = await Sos.findOne({ sosId: sosId });
     
     if (!sos) {
       // Удаляем загруженный файл, если вызов не найден
       if (req.file) {
         fs.unlinkSync(req.file.path);
+        console.error(`SOS-вызов не найден, файл удален: ${req.file.path}`);
       }
       return res.status(404).json({ message: 'SOS-вызов не найден' });
     }
@@ -127,17 +144,20 @@ router.post('/record', upload.single('videoChunk'), async (req, res) => {
     const sosDir = path.join(__dirname, '../../uploads/videos', sosId);
     if (!fs.existsSync(sosDir)) {
       fs.mkdirSync(sosDir, { recursive: true });
+      console.log(`Создана директория для видео SOS ${sosId}: ${sosDir}`);
     }
     
     // Перемещаем файл в директорию вызова
     const newPath = path.join(sosDir, req.file.filename);
     fs.renameSync(req.file.path, newPath);
+    console.log(`Файл перемещен в: ${newPath}`);
     
     // Обновляем запись в базе данных
     if (!sos.recordingStarted) {
       sos.recordingStarted = true;
       sos.videoPath = sosDir;
       await sos.save();
+      console.log(`Запись SOS ${sosId} обновлена: recordingStarted=true, videoPath=${sosDir}`);
     }
     
     res.status(200).json({ message: 'Видеофрагмент успешно сохранен' });
@@ -150,14 +170,19 @@ router.post('/record', upload.single('videoChunk'), async (req, res) => {
 // Получить записанное видео (только охрана)
 router.get('/:id/video', roleMiddleware('guard'), async (req, res) => {
   try {
+    console.log(`Запрос на получение видео для SOS ${req.params.id}`);
+    
     const sos = await Sos.findById(req.params.id);
     
     if (!sos || !sos.videoPath) {
+      console.log(`Видео не найдено для SOS ${req.params.id}`);
       return res.status(404).json({ message: 'Видео не найдено' });
     }
     
     // Получаем список файлов в директории
     const videoDir = sos.videoPath;
+    console.log(`Чтение директории с видео: ${videoDir}`);
+    
     fs.readdir(videoDir, (err, files) => {
       if (err) {
         console.error('Ошибка при чтении директории с видео:', err);
@@ -171,8 +196,15 @@ router.get('/:id/video', roleMiddleware('guard'), async (req, res) => {
           name: file,
           path: path.join(videoDir, file),
           url: `/uploads/videos/${sos.sosId}/${file}`
-        }));
+        }))
+        .sort((a, b) => {
+          // Сортировка по времени создания (извлекаем timestamp из имени файла)
+          const timeA = parseInt(a.name.split('_')[1].split('.')[0]);
+          const timeB = parseInt(b.name.split('_')[1].split('.')[0]);
+          return timeB - timeA; // От новых к старым
+        });
       
+      console.log(`Найдено ${videoFiles.length} видеофайлов для SOS ${req.params.id}`);
       res.json(videoFiles);
     });
   } catch (err) {

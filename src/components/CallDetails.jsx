@@ -20,6 +20,7 @@ const CallDetails = () => {
   const [recordedVideos, setRecordedVideos] = useState([]);
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [viewMode, setViewMode] = useState('live'); // 'live' или 'recorded'
+  const [connectionStatus, setConnectionStatus] = useState('Подключение...');
 
   useEffect(() => {
     const fetchCallDetails = async () => {
@@ -69,15 +70,39 @@ const CallDetails = () => {
     // Если выбран режим записанных видео, не инициализируем WebRTC
     if (viewMode === 'recorded') return;
 
+    console.log('Инициализация WebRTC соединения...');
+    setConnectionStatus('Инициализация соединения...');
+
     // Инициализация WebRTC
     peerRef.current = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
     });
 
     peerRef.current.ontrack = (event) => {
+      console.log('Получен медиа-трек:', event.track.kind);
       if (videoRef.current) {
         videoRef.current.srcObject = event.streams[0];
+        console.log('Видеопоток установлен в элемент video');
+        setConnectionStatus('Соединение установлено');
       }
+    };
+
+    peerRef.current.oniceconnectionstatechange = () => {
+      console.log('ICE состояние изменилось:', peerRef.current.iceConnectionState);
+      setConnectionStatus(`ICE состояние: ${peerRef.current.iceConnectionState}`);
+      
+      if (peerRef.current.iceConnectionState === 'failed' || 
+          peerRef.current.iceConnectionState === 'disconnected') {
+        setError('Соединение потеряно. Пытаемся восстановить...');
+        // Можно добавить логику переподключения здесь
+      }
+    };
+
+    peerRef.current.onsignalingstatechange = () => {
+      console.log('Signaling состояние:', peerRef.current.signalingState);
     };
 
     // Подключение к Socket.IO
@@ -87,11 +112,25 @@ const CallDetails = () => {
     });
 
     socketRef.current.on('connect', () => {
+      console.log('Socket.IO подключен, присоединяемся к комнате:', id);
       socketRef.current.emit('join-room', id);
     });
 
-    socketRef.current.on('ice-candidate', (candidate) => {
-      peerRef.current?.addIceCandidate(candidate).catch(console.error);
+    socketRef.current.on('connect_error', (err) => {
+      console.error('Ошибка подключения Socket.IO:', err);
+      setError('Не удалось подключиться к серверу');
+    });
+
+    socketRef.current.on('ice-candidate', async (candidate) => {
+      try {
+        console.log('Получен ICE кандидат от клиента');
+        if (peerRef.current) {
+          await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log('ICE кандидат успешно добавлен');
+        }
+      } catch (err) {
+        console.error('Ошибка при добавлении ICE кандидата:', err);
+      }
     });
 
     socketRef.current.on('sos-canceled', () => {
@@ -102,26 +141,42 @@ const CallDetails = () => {
     // Создание ответа на offer
     const handleOffer = async () => {
       try {
-        await peerRef.current.setRemoteDescription(call.offer);
+        console.log('Обработка offer от клиента');
+        
+        if (!call.offer) {
+          console.error('Offer отсутствует в данных вызова');
+          setError('Не удалось установить видеосвязь: отсутствует offer');
+          return;
+        }
+        
+        await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
+        console.log('Remote description установлен');
         
         peerRef.current.onicecandidate = ({ candidate }) => {
           if (candidate) {
+            console.log('Отправка ICE кандидата клиенту');
             socketRef.current.emit('ice-candidate', { candidate, id });
           }
         };
 
         const answer = await peerRef.current.createAnswer();
         await peerRef.current.setLocalDescription(answer);
+        console.log('Local description (answer) установлен');
         
         socketRef.current.emit('sos-answer', { answer, id });
+        console.log('Answer отправлен клиенту');
+        
+        setConnectionStatus('Ожидание соединения...');
       } catch (err) {
         console.error('Ошибка при установке WebRTC соединения:', err);
-        setError('Не удалось установить видеосвязь');
+        setError('Не удалось установить видеосвязь: ' + err.message);
       }
     };
 
     if (call.offer) {
       handleOffer();
+    } else {
+      setError('Отсутствует offer для установки соединения');
     }
 
     return () => {
@@ -355,21 +410,68 @@ const CallDetails = () => {
           </div>
           
           {viewMode === 'live' ? (
-            <div style={{ 
-              backgroundColor: '#000', 
-              borderRadius: '0.25rem',
-              height: '400px',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              overflow: 'hidden'
-            }}>
-              <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-              />
+            <div>
+              <div style={{ 
+                backgroundColor: '#000', 
+                borderRadius: '0.25rem',
+                height: '400px',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                overflow: 'hidden',
+                position: 'relative'
+              }}>
+                <video 
+                  ref={videoRef} 
+                  autoPlay 
+                  playsInline
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+                
+                {connectionStatus !== 'Соединение установлено' && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    color: 'white',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    flexDirection: 'column',
+                    padding: '1rem'
+                  }}>
+                    <div style={{ marginBottom: '1rem' }}>{connectionStatus}</div>
+                    {connectionStatus !== 'Соединение установлено' && (
+                      <div className="spinner" style={{
+                        width: '40px',
+                        height: '40px',
+                        border: '4px solid rgba(255,255,255,0.3)',
+                        borderRadius: '50%',
+                        borderTop: '4px solid white',
+                        animation: 'spin 1s linear infinite'
+                      }}></div>
+                    )}
+                    <style>{`
+                      @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                      }
+                    `}</style>
+                  </div>
+                )}
+              </div>
+              
+              <div style={{ 
+                marginTop: '0.5rem', 
+                textAlign: 'center',
+                fontSize: '0.9rem',
+                color: connectionStatus === 'Соединение установлено' ? '#28a745' : '#dc3545'
+              }}>
+                {connectionStatus}
+              </div>
             </div>
           ) : (
             <div>

@@ -15,6 +15,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const [location, setLocation] = useState(null);
   const [backgroundMode, setBackgroundMode] = useState(false);
   const wakeLockRef = useRef(null);
+  const [debugMessage, setDebugMessage] = useState('');
 
   useEffect(() => {
     socketRef.current = io(serverUrl, { 
@@ -22,25 +23,102 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       transports: ['websocket'] 
     });
 
-    socketRef.current.on('connect_error', () => setError('Не удалось подключиться к серверу'));
+    socketRef.current.on('connect', () => {
+      console.log('Socket.IO подключен');
+    });
+
+    socketRef.current.on('connect_error', (err) => {
+      console.error('Ошибка подключения Socket.IO:', err);
+      setError('Не удалось подключиться к серверу');
+    });
+    
     socketRef.current.on('sos-answer', async ({ answer }) => { 
-      try { 
-        await peerRef.current.setRemoteDescription(answer); 
+      try {
+        console.log('Получен ответ SOS:', answer);
+        if (peerRef.current && peerRef.current.signalingState !== 'closed') {
+          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          console.log('Remote description установлен успешно');
+        }
       } catch (e) {
         console.error('Ошибка при установке ответа:', e);
       } 
     });
-    socketRef.current.on('ice-candidate', candidate => { 
-      peerRef.current?.addIceCandidate(candidate).catch(() => {}); 
+    
+    socketRef.current.on('ice-candidate', async (candidate) => {
+      try {
+        console.log('Получен ICE кандидат:', candidate);
+        if (peerRef.current && peerRef.current.remoteDescription) {
+          await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log('ICE кандидат добавлен успешно');
+        } else {
+          console.warn('Не удалось добавить ICE кандидата: peer не инициализирован или нет remoteDescription');
+        }
+      } catch (err) {
+        console.error('Ошибка при добавлении ICE кандидата:', err);
+      }
     });
+    
     socketRef.current.on('sos-canceled', () => {
+      console.log('SOS вызов отменен');
       releaseWakeLock();
       stopStreaming();
       setError('SOS вызов был отменен охраной');
     });
 
-    return () => socketRef.current.disconnect();
+    socketRef.current.on('sos-saved', ({ id }) => {
+      console.log('SOS сохранен с ID:', id);
+      setSosId(id);
+      
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
+        startRecording(id);
+      }
+    });
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
   }, [serverUrl, token]);
+
+  const startRecording = (id) => {
+    try {
+      if (!streamRef.current) {
+        console.error('Нет медиапотока для записи');
+        return;
+      }
+      
+      const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+      mediaRecorderRef.current = new MediaRecorder(streamRef.current, options);
+      
+      const chunks = [];
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+          
+          const formData = new FormData();
+          formData.append('videoChunk', new Blob([e.data], { type: 'video/webm' }));
+          formData.append('sosId', id);
+          
+          axios.post('/api/calls/record', formData, {
+            headers: { 
+              'Content-Type': 'multipart/form-data',
+              Authorization: `Bearer ${token}`
+            }
+          }).then(() => {
+            console.log('Видеофрагмент отправлен успешно');
+          }).catch(err => {
+            console.error('Ошибка при отправке видео:', err);
+          });
+        }
+      };
+      
+      mediaRecorderRef.current.start(10000);
+      console.log('Запись видео начата');
+    } catch (err) {
+      console.error('Ошибка при запуске записи:', err);
+    }
+  };
 
   const requestWakeLock = async () => {
     if ('wakeLock' in navigator) {
@@ -74,14 +152,17 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const stopStreaming = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+      console.log('Запись остановлена');
     }
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
+      console.log('Медиапотоки остановлены');
     }
     
     if (peerRef.current) {
       peerRef.current.close();
+      console.log('WebRTC соединение закрыто');
     }
     
     setSending(false);
@@ -125,48 +206,74 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     }
 
     setError('');
+    setDebugMessage('Инициализация SOS...');
     setSending(true);
 
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
         const { latitude, longitude } = coords;
         setLocation({ latitude, longitude });
+        setDebugMessage('Геолокация получена');
         
         try {
           await requestWakeLock();
           
-          if (!streamRef.current) {
-            streamRef.current = await navigator.mediaDevices.getUserMedia({ 
-              video: { 
-                facingMode: 'environment',
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              }, 
-              audio: true 
-            });
-            
-            if (videoRef.current) {
-              videoRef.current.srcObject = streamRef.current;
-            }
+          setDebugMessage('Запрашиваем доступ к камере...');
+          streamRef.current = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              facingMode: 'environment',
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }, 
+            audio: true 
+          });
+          
+          if (videoRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+            videoRef.current.muted = true;
           }
           
+          setDebugMessage('Доступ к камере получен');
+          
           peerRef.current = new RTCPeerConnection({ 
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] 
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ] 
           });
           
           peerRef.current.onicecandidate = ({ candidate }) => {
-            if (candidate && socketRef.current) {
+            if (candidate && socketRef.current && sosId) {
+              console.log('Отправка ICE кандидата:', candidate);
               socketRef.current.emit('ice-candidate', { candidate, id: sosId });
             }
           };
           
-          streamRef.current.getTracks().forEach(track => 
-            peerRef.current.addTrack(track, streamRef.current)
-          );
+          peerRef.current.oniceconnectionstatechange = () => {
+            console.log('ICE состояние:', peerRef.current.iceConnectionState);
+            setDebugMessage(`ICE состояние: ${peerRef.current.iceConnectionState}`);
+          };
+          
+          peerRef.current.onsignalingstatechange = () => {
+            console.log('Signaling состояние:', peerRef.current.signalingState);
+          };
+          
+          streamRef.current.getTracks().forEach(track => {
+            peerRef.current.addTrack(track, streamRef.current);
+            console.log('Трек добавлен:', track.kind);
+          });
+          
+          setDebugMessage('WebRTC соединение инициализировано');
 
-          const offer = await peerRef.current.createOffer();
+          const offer = await peerRef.current.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+          });
+          
           await peerRef.current.setLocalDescription(offer);
-
+          console.log('Local description установлен:', offer);
+          
+          setDebugMessage('Отправка SOS сигнала...');
           socketRef.current.emit('sos-offer', { 
             offer, 
             latitude, 
@@ -174,43 +281,18 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             phone: userPhone 
           });
           
-          const options = { mimeType: 'video/webm;codecs=vp9,opus' };
-          mediaRecorderRef.current = new MediaRecorder(streamRef.current, options);
-          
-          const chunks = [];
-          mediaRecorderRef.current.ondataavailable = (e) => {
-            if (e.data.size > 0) {
-              chunks.push(e.data);
-              
-              if (sosId) {
-                const formData = new FormData();
-                formData.append('videoChunk', new Blob([e.data], { type: 'video/webm' }));
-                formData.append('sosId', sosId);
-                
-                axios.post('/api/calls/record', formData, {
-                  headers: { 
-                    'Content-Type': 'multipart/form-data',
-                    Authorization: `Bearer ${token}`
-                  }
-                }).catch(err => console.error('Ошибка при отправке видео:', err));
-              }
-            }
-          };
-          
-          mediaRecorderRef.current.start(10000);
-          
-          socketRef.current.once('sos-saved', ({ id }) => setSosId(id));
           setStreaming(true);
+          setDebugMessage('SOS сигнал отправлен');
         } catch (err) {
-          setError('Не удалось запустить камеру или соединение');
+          setError(`Не удалось запустить камеру или соединение: ${err.message}`);
           setSending(false);
-          console.error(err);
+          console.error('Ошибка при инициализации SOS:', err);
         }
       }, 
       (err) => {
         setError('Не удалось получить геолокацию');
         setSending(false);
-        console.error(err);
+        console.error('Ошибка геолокации:', err);
       }, 
       { 
         enableHighAccuracy: true, 
@@ -287,6 +369,17 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           }}>
             {backgroundMode ? 'Запись продолжается в фоновом режиме' : 'Идет запись с камеры'}
           </div>
+          
+          {debugMessage && (
+            <div style={{ 
+              fontSize: '0.8rem', 
+              color: '#6c757d',
+              textAlign: 'center',
+              marginTop: '0.5rem'
+            }}>
+              {debugMessage}
+            </div>
+          )}
         </div>
       )}
       
