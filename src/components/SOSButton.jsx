@@ -17,11 +17,22 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const wakeLockRef = useRef(null);
   const [debugMessage, setDebugMessage] = useState('');
   const [iceCandidates, setIceCandidates] = useState([]);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const maxReconnectAttempts = 3;
+
+  // Функция для логирования
+  const addDebugMessage = (message) => {
+    console.log(message);
+    setDebugMessage(message);
+  };
 
   useEffect(() => {
     socketRef.current = io(serverUrl, { 
       auth: { token }, 
-      transports: ['websocket', 'polling'] 
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 20000
     });
 
     socketRef.current.on('connect', () => {
@@ -36,10 +47,14 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     socketRef.current.on('sos-answer', async ({ answer }) => { 
       try {
         console.log('Получен ответ SOS:', answer);
+        addDebugMessage('Получен ответ от охраны');
+        
         if (peerRef.current && peerRef.current.signalingState !== 'closed') {
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
           console.log('Remote description установлен успешно');
+          addDebugMessage('Соединение установлено');
           
+          // Отправляем сохраненные ICE кандидаты после установки remoteDescription
           if (sosId) {
             iceCandidates.forEach(candidate => {
               socketRef.current.emit('ice-candidate', { candidate, id: sosId });
@@ -47,9 +62,22 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             });
             setIceCandidates([]);
           }
+        } else {
+          console.error('Не удалось установить remoteDescription: peer закрыт или не инициализирован');
+          addDebugMessage('Ошибка установки соединения');
+          
+          // Пробуем переподключиться
+          if (reconnectAttempts < maxReconnectAttempts) {
+            addDebugMessage('Попытка переподключения...');
+            setTimeout(() => {
+              reinitializeConnection();
+              setReconnectAttempts(prev => prev + 1);
+            }, 2000);
+          }
         }
       } catch (e) {
         console.error('Ошибка при установке ответа:', e);
+        addDebugMessage(`Ошибка: ${e.message}`);
       } 
     });
     
@@ -77,6 +105,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     socketRef.current.on('sos-saved', ({ id }) => {
       console.log('SOS сохранен с ID:', id);
       setSosId(id);
+      addDebugMessage('SOS сигнал зарегистрирован');
       
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
         startRecording(id);
@@ -90,7 +119,18 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         socketRef.current.disconnect();
       }
     };
-  }, [serverUrl, token, iceCandidates]);
+  }, [serverUrl, token]);
+
+  // Отправка сохраненных ICE кандидатов
+  useEffect(() => {
+    if (sosId && iceCandidates.length > 0 && socketRef.current) {
+      iceCandidates.forEach(candidate => {
+        socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+        console.log('Отправлен сохраненный ICE кандидат после получения sosId');
+      });
+      setIceCandidates([]);
+    }
+  }, [sosId, iceCandidates]);
 
   const startRecording = (id) => {
     try {
@@ -175,12 +215,16 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     }
     
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      console.log('Медиапотоки остановлены');
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log(`Трек ${track.kind} остановлен`);
+      });
+      streamRef.current = null;
     }
     
     if (peerRef.current) {
       peerRef.current.close();
+      peerRef.current = null;
       console.log('WebRTC соединение закрыто');
     }
     
@@ -190,6 +234,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     setLocation(null);
     setBackgroundMode(false);
     setIceCandidates([]);
+    setReconnectAttempts(0);
   };
 
   useEffect(() => {
@@ -207,6 +252,167 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [streaming, backgroundMode]);
+
+  // Инициализация WebRTC соединения
+  const initializeWebRTC = async () => {
+    try {
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
+      
+      peerRef.current = new RTCPeerConnection({ 
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+        ],
+        iceTransportPolicy: 'all',
+        iceCandidatePoolSize: 10
+      });
+      
+      peerRef.current.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          console.log('Сгенерирован ICE кандидат:', candidate);
+          
+          if (sosId) {
+            socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+            console.log('ICE кандидат отправлен напрямую');
+          } else {
+            setIceCandidates(prev => [...prev, candidate]);
+            console.log('ICE кандидат сохранен для последующей отправки');
+          }
+        }
+      };
+      
+      peerRef.current.oniceconnectionstatechange = () => {
+        const state = peerRef.current.iceConnectionState;
+        console.log('ICE состояние:', state);
+        
+        if (state === 'connected' || state === 'completed') {
+          addDebugMessage('Соединение установлено');
+          setReconnectAttempts(0);
+        } else if (state === 'failed') {
+          addDebugMessage('Соединение не удалось');
+          if (reconnectAttempts < maxReconnectAttempts) {
+            addDebugMessage('Попытка восстановления соединения...');
+            peerRef.current.restartIce();
+            setReconnectAttempts(prev => prev + 1);
+          }
+        } else if (state === 'disconnected') {
+          addDebugMessage('Соединение прервано');
+        }
+      };
+      
+      peerRef.current.onsignalingstatechange = () => {
+        console.log('Signaling состояние:', peerRef.current.signalingState);
+      };
+      
+      peerRef.current.onconnectionstatechange = () => {
+        console.log('Connection состояние:', peerRef.current.connectionState);
+        if (peerRef.current.connectionState === 'connected') {
+          addDebugMessage('Соединение установлено');
+        } else if (peerRef.current.connectionState === 'failed') {
+          addDebugMessage('Соединение не удалось');
+        }
+      };
+      
+      // Добавляем все треки в peer connection
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+          const sender = peerRef.current.addTrack(track, streamRef.current);
+          console.log(`Трек добавлен: ${track.kind}, enabled: ${track.enabled}`);
+        });
+      } else {
+        throw new Error('Медиапоток не инициализирован');
+      }
+      
+      // Создаем offer
+      const offer = await peerRef.current.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
+      await peerRef.current.setLocalDescription(offer);
+      console.log('Local description установлен:', offer);
+      
+      return offer;
+    } catch (err) {
+      console.error('Ошибка при инициализации WebRTC:', err);
+      throw err;
+    }
+  };
+
+  // Переинициализация соединения
+  const reinitializeConnection = async () => {
+    if (!location || !socketRef.current) return;
+    
+    try {
+      addDebugMessage('Переинициализация соединения...');
+      
+      // Создаем новое WebRTC соединение
+      const offer = await initializeWebRTC();
+      
+      // Отправляем новый offer
+      socketRef.current.emit('sos-offer', { 
+        offer, 
+        latitude: location.latitude, 
+        longitude: location.longitude, 
+        phone: userPhone,
+        reconnect: true,
+        sosId: sosId // Отправляем существующий ID, если есть
+      });
+      
+      addDebugMessage('Новый SOS сигнал отправлен');
+    } catch (err) {
+      console.error('Ошибка при переинициализации соединения:', err);
+      addDebugMessage(`Ошибка: ${err.message}`);
+    }
+  };
+
+  // Инициализация медиапотоков
+  const initializeMedia = async () => {
+    try {
+      const constraints = { 
+        video: { 
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }, 
+        audio: true 
+      };
+      
+      try {
+        streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log('Доступ к основной камере получен');
+      } catch (err) {
+        console.error('Ошибка при запросе основной камеры:', err);
+        
+        // Пробуем получить доступ к любой камере
+        constraints.video = true;
+        streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log('Доступ к фронтальной камере получен');
+      }
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        videoRef.current.muted = true;
+        
+        // Проверяем, что видео действительно воспроизводится
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current.play().catch(err => {
+            console.error('Ошибка воспроизведения видео:', err);
+          });
+        };
+      }
+      
+      return streamRef.current;
+    } catch (err) {
+      console.error('Ошибка при инициализации медиа:', err);
+      throw err;
+    }
+  };
 
   const handleSOS = async () => {
     if (sending && sosId) {
@@ -226,106 +432,28 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     }
 
     setError('');
-    setDebugMessage('Инициализация SOS...');
+    addDebugMessage('Инициализация SOS...');
     setSending(true);
     setIceCandidates([]);
+    setReconnectAttempts(0);
 
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
         const { latitude, longitude } = coords;
         setLocation({ latitude, longitude });
-        setDebugMessage('Геолокация получена');
+        addDebugMessage('Геолокация получена');
         
         try {
           await requestWakeLock();
           
-          setDebugMessage('Запрашиваем доступ к камере...');
+          addDebugMessage('Запрашиваем доступ к камере...');
+          await initializeMedia();
+          addDebugMessage('Доступ к камере получен');
           
-          const constraints = { 
-            video: { 
-              facingMode: 'environment',
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            }, 
-            audio: true 
-          };
+          addDebugMessage('Инициализация WebRTC соединения...');
+          const offer = await initializeWebRTC();
           
-          try {
-            streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-          } catch (err) {
-            console.error('Ошибка при запросе основной камеры:', err);
-            constraints.video = true;
-            streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-          }
-          
-          if (videoRef.current) {
-            videoRef.current.srcObject = streamRef.current;
-            videoRef.current.muted = true;
-          }
-          
-          setDebugMessage('Доступ к камере получен');
-          
-          peerRef.current = new RTCPeerConnection({ 
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' },
-              { urls: 'stun:stun3.l.google.com:19302' },
-              { urls: 'stun:stun4.l.google.com:19302' }
-            ] 
-          });
-          
-          peerRef.current.onicecandidate = ({ candidate }) => {
-            if (candidate) {
-              console.log('Сгенерирован ICE кандидат:', candidate);
-              
-              if (sosId) {
-                socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-                console.log('ICE кандидат отправлен напрямую');
-              } else {
-                setIceCandidates(prev => [...prev, candidate]);
-                console.log('ICE кандидат сохранен для последующей отправки');
-              }
-            }
-          };
-          
-          peerRef.current.oniceconnectionstatechange = () => {
-            const state = peerRef.current.iceConnectionState;
-            console.log('ICE состояние:', state);
-            setDebugMessage(`ICE состояние: ${state}`);
-            
-            if (state === 'failed') {
-              if (peerRef.current) {
-                peerRef.current.restartIce();
-                console.log('Попытка восстановления ICE соединения');
-              }
-            }
-          };
-          
-          peerRef.current.onsignalingstatechange = () => {
-            console.log('Signaling состояние:', peerRef.current.signalingState);
-          };
-          
-          peerRef.current.onconnectionstatechange = () => {
-            console.log('Connection состояние:', peerRef.current.connectionState);
-          };
-          
-          streamRef.current.getTracks().forEach(track => {
-            const sender = peerRef.current.addTrack(track, streamRef.current);
-            console.log(`Трек добавлен: ${track.kind}, enabled: ${track.enabled}`);
-          });
-          
-          setDebugMessage('WebRTC соединение инициализировано');
-
-          const offer = await peerRef.current.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: true
-          });
-          
-          await peerRef.current.setLocalDescription(offer);
-          console.log('Local description установлен:', offer);
-          
-          setDebugMessage('Отправка SOS сигнала...');
+          addDebugMessage('Отправка SOS сигнала...');
           socketRef.current.emit('sos-offer', { 
             offer, 
             latitude, 
@@ -334,11 +462,19 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           });
           
           setStreaming(true);
-          setDebugMessage('SOS сигнал отправлен');
+          addDebugMessage('SOS сигнал отправлен');
         } catch (err) {
           setError(`Не удалось запустить камеру или соединение: ${err.message}`);
           setSending(false);
           console.error('Ошибка при инициализации SOS:', err);
+          
+          // Освобождаем ресурсы при ошибке
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+          }
+          if (peerRef.current) {
+            peerRef.current.close();
+          }
         }
       }, 
       (err) => {
@@ -430,6 +566,17 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
               marginTop: '0.5rem'
             }}>
               {debugMessage}
+            </div>
+          )}
+          
+          {reconnectAttempts > 0 && (
+            <div style={{ 
+              fontSize: '0.8rem', 
+              color: '#dc3545',
+              textAlign: 'center',
+              marginTop: '0.5rem'
+            }}>
+              Попыток переподключения: {reconnectAttempts} из {maxReconnectAttempts}
             </div>
           )}
         </div>

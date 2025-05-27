@@ -239,53 +239,73 @@ const CallDetails = () => {
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
 
-    // Используем Google Maps API с вашим ключом
-    const googleMapsApiKey = 'AIzaSyD7IrOL7Ck6UVlhAZXXcmVRzAzNQ0kkEbA'; // Замените на ваш ключ
-    
-    if (!window.google) {
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&callback=initMap`;
-      script.async = true;
-      script.defer = true;
-      
-      window.initMap = () => {
-        initializeMap(call.latitude, call.longitude);
-      };
-      
-      document.head.appendChild(script);
-    } else {
-      initializeMap(call.latitude, call.longitude);
-    }
-  }, [call]);
-
-  const initializeMap = (lat, lng) => {
-    if (!mapRef.current) return;
-
-    try {
-      const latNum = parseFloat(lat);
-      const lngNum = parseFloat(lng);
-      
-      if (isNaN(latNum) || isNaN(lngNum)) {
-        console.error('Некорректные координаты:', lat, lng);
-        return;
+    // Используем OpenStreetMap вместо Google Maps (не требует API ключа)
+    const createMapWithOSM = () => {
+      try {
+        // Проверяем, загружен ли Leaflet
+        if (!window.L) {
+          // Загружаем CSS для Leaflet
+          const linkElement = document.createElement('link');
+          linkElement.rel = 'stylesheet';
+          linkElement.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+          linkElement.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
+          linkElement.crossOrigin = '';
+          document.head.appendChild(linkElement);
+          
+          // Загружаем JavaScript для Leaflet
+          const script = document.createElement('script');
+          script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+          script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
+          script.crossOrigin = '';
+          script.onload = () => {
+            initializeOSMap(call.latitude, call.longitude);
+          };
+          document.head.appendChild(script);
+        } else {
+          initializeOSMap(call.latitude, call.longitude);
+        }
+      } catch (error) {
+        console.error('Ошибка при создании карты:', error);
       }
+    };
+
+    const initializeOSMap = (lat, lng) => {
+      if (!mapRef.current) return;
       
-      const map = new window.google.maps.Map(mapRef.current, {
-        center: { lat: latNum, lng: lngNum },
-        zoom: 15,
-      });
-
-      const marker = new window.google.maps.Marker({
-        position: { lat: latNum, lng: lngNum },
-        map,
-        title: 'SOS местоположение'
-      });
-
-      mapMarkerRef.current = marker;
-    } catch (error) {
-      console.error('Ошибка при инициализации карты:', error);
-    }
-  };
+      try {
+        const latNum = parseFloat(lat);
+        const lngNum = parseFloat(lng);
+        
+        if (isNaN(latNum) || isNaN(lngNum)) {
+          console.error('Некорректные координаты:', lat, lng);
+          return;
+        }
+        
+        // Очищаем контейнер карты, если там уже есть карта
+        mapRef.current.innerHTML = '';
+        
+        // Создаем карту
+        const map = window.L.map(mapRef.current).setView([latNum, lngNum], 15);
+        
+        // Добавляем слой OpenStreetMap
+        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        
+        // Добавляем маркер
+        const marker = window.L.marker([latNum, lngNum]).addTo(map);
+        marker.bindPopup("SOS местоположение").openPopup();
+        
+        mapMarkerRef.current = marker;
+        
+        console.log('Карта OpenStreetMap успешно инициализирована');
+      } catch (error) {
+        console.error('Ошибка при инициализации карты:', error);
+      }
+    };
+    
+    createMapWithOSM();
+  }, [call]);
 
   const handleCancelCall = async () => {
     try {
@@ -312,6 +332,20 @@ const CallDetails = () => {
   // Выбор видео для просмотра
   const handleSelectVideo = (video) => {
     setSelectedVideo(video);
+  };
+
+  // Принудительное переподключение видеотрансляции
+  const handleReconnect = () => {
+    if (peerRef.current) {
+      peerRef.current.close();
+    }
+    
+    setHasVideo(false);
+    setHasAudio(false);
+    setConnectionStatus('Переподключение...');
+    
+    // Перезагружаем компонент
+    setCall(prev => ({...prev}));
   };
 
   if (loading) {
@@ -452,22 +486,42 @@ const CallDetails = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h3>Видеотрансляция</h3>
             
-            {call.recordingStarted && (
-              <button 
-                onClick={toggleViewMode}
-                style={{ 
-                  padding: '0.5rem 1rem', 
-                  backgroundColor: '#007bff', 
-                  color: 'white', 
-                  border: 'none',
-                  borderRadius: '0.25rem',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem'
-                }}
-              >
-                {viewMode === 'live' ? 'Архивные записи' : 'Прямая трансляция'}
-              </button>
-            )}
+            <div>
+              {call.recordingStarted && (
+                <button 
+                  onClick={toggleViewMode}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#007bff', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    marginRight: '0.5rem'
+                  }}
+                >
+                  {viewMode === 'live' ? 'Архивные записи' : 'Прямая трансляция'}
+                </button>
+              )}
+              
+              {viewMode === 'live' && (
+                <button 
+                  onClick={handleReconnect}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#28a745', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Переподключить
+                </button>
+              )}
+            </div>
           </div>
           
           {viewMode === 'live' ? (
@@ -544,8 +598,7 @@ const CallDetails = () => {
                 padding: '0.5rem',
                 maxHeight: '100px',
                 overflowY: 'auto',
-                whiteSpace: 'pre-line',
-                display: 'none' // Скрываем отладочную информацию в продакшене
+                whiteSpace: 'pre-line'
               }}>
                 {debugInfo}
               </div>
