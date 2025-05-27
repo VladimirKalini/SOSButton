@@ -25,6 +25,7 @@ const CallDetails = () => {
   const [hasAudio, setHasAudio] = useState(false);
   const [debugInfo, setDebugInfo] = useState('');
   const [showFullDebug, setShowFullDebug] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
   // Добавляем отладочную информацию
   const addDebugInfo = (info) => {
@@ -108,11 +109,48 @@ const CallDetails = () => {
       }
       
       if (videoRef.current) {
-        videoRef.current.srcObject = event.streams[0];
-        videoRef.current.play().catch(err => {
-          addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
-        });
-        addDebugInfo('Видеопоток установлен в элемент video');
+        // Проверяем, есть ли уже видеопоток
+        const currentStream = videoRef.current.srcObject;
+        
+        // Если поток уже установлен, добавляем трек к существующему потоку
+        if (currentStream) {
+          addDebugInfo('Добавление трека к существующему потоку');
+          // Не заменяем поток, если он уже есть
+        } else {
+          // Устанавливаем новый поток
+          videoRef.current.srcObject = event.streams[0];
+          addDebugInfo('Установлен новый видеопоток');
+          
+          // Настраиваем обработчики для видеоэлемента
+          videoRef.current.onloadedmetadata = () => {
+            addDebugInfo('Метаданные видео загружены');
+            
+            // Используем Promise для обработки воспроизведения
+            const playPromise = videoRef.current.play();
+            
+            if (playPromise !== undefined) {
+              playPromise
+                .then(() => {
+                  addDebugInfo('Воспроизведение видео успешно запущено');
+                  setAutoplayBlocked(false);
+                })
+                .catch(err => {
+                  addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
+                  
+                  // Если ошибка связана с автовоспроизведением, добавляем кнопку для ручного запуска
+                  if (err.name === 'NotAllowedError') {
+                    addDebugInfo('Автовоспроизведение заблокировано браузером');
+                    setAutoplayBlocked(true);
+                  }
+                });
+            }
+          };
+          
+          // Обработка ошибок
+          videoRef.current.onerror = (e) => {
+            addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
+          };
+        }
       } else {
         addDebugInfo('Ошибка: videoRef.current отсутствует');
       }
@@ -217,11 +255,43 @@ const CallDetails = () => {
             }
             
             if (videoRef.current) {
-              videoRef.current.srcObject = event.streams[0];
-              videoRef.current.play().catch(err => {
-                addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
-              });
-              addDebugInfo('Видеопоток установлен в элемент video');
+              // Проверяем, есть ли уже видеопоток
+              const currentStream = videoRef.current.srcObject;
+              
+              // Если поток уже установлен, добавляем трек к существующему потоку
+              if (currentStream) {
+                addDebugInfo('Добавление трека к существующему потоку');
+                // Не заменяем поток, если он уже есть
+              } else {
+                // Устанавливаем новый поток
+                videoRef.current.srcObject = event.streams[0];
+                addDebugInfo('Установлен новый видеопоток после переподключения');
+                
+                // Настраиваем обработчики для видеоэлемента
+                videoRef.current.onloadedmetadata = () => {
+                  addDebugInfo('Метаданные видео загружены после переподключения');
+                  
+                  // Используем Promise для обработки воспроизведения
+                  const playPromise = videoRef.current.play();
+                  
+                  if (playPromise !== undefined) {
+                    playPromise
+                      .then(() => {
+                        addDebugInfo('Воспроизведение видео успешно запущено после переподключения');
+                        setAutoplayBlocked(false);
+                      })
+                      .catch(err => {
+                        addDebugInfo(`Ошибка воспроизведения после переподключения: ${err.message}`);
+                        
+                        // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
+                        if (err.name === 'NotAllowedError') {
+                          addDebugInfo('Автовоспроизведение заблокировано браузером после переподключения');
+                          setAutoplayBlocked(true);
+                        }
+                      });
+                  }
+                };
+              }
             }
           };
           
@@ -476,6 +546,26 @@ const CallDetails = () => {
     setShowFullDebug(!showFullDebug);
   };
 
+  // Ручной запуск воспроизведения видео
+  const handleManualPlay = () => {
+    if (videoRef.current) {
+      addDebugInfo('Попытка ручного запуска воспроизведения');
+      
+      const playPromise = videoRef.current.play();
+      
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            addDebugInfo('Воспроизведение успешно запущено вручную');
+            setAutoplayBlocked(false);
+          })
+          .catch(err => {
+            addDebugInfo(`Ошибка при ручном запуске воспроизведения: ${err.message}`);
+          });
+      }
+    }
+  };
+
   if (loading) {
     return <div>Загрузка данных вызова...</div>;
   }
@@ -702,6 +792,41 @@ const CallDetails = () => {
                         100% { transform: rotate(360deg); }
                       }
                     `}</style>
+                  </div>
+                )}
+                
+                {autoplayBlocked && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    color: 'white',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    flexDirection: 'column',
+                    padding: '1rem'
+                  }}>
+                    <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+                      Автовоспроизведение видео заблокировано браузером
+                    </div>
+                    <button 
+                      onClick={handleManualPlay}
+                      style={{ 
+                        padding: '0.75rem 1.5rem', 
+                        backgroundColor: '#28a745', 
+                        color: 'white', 
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        cursor: 'pointer',
+                        fontSize: '1rem'
+                      }}
+                    >
+                      Запустить видео
+                    </button>
                   </div>
                 )}
               </div>
