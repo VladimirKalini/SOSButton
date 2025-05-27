@@ -95,11 +95,7 @@ export default function LoginForm() {
     try {
       const { data } = await axios.post('/api/login', { phone, password });
       login(data.token, data.user); 
-      if (data.user.role === 'guard') { 
-        navigate('/guard', { replace: true }); 
-      } else { 
-        navigate('/user', { replace: true }); 
-      }
+      navigate('/', { replace: true });
     } catch (e) {
       setError(
         e.response?.data?.message ||
@@ -126,6 +122,7 @@ export default function LoginForm() {
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
+            placeholder="+79001234567"
             required
             style={styles.input}
           />

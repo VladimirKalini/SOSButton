@@ -5,23 +5,41 @@ import { AuthProvider, useAuth } from './authContext';
 import LoginForm from './components/Login';
 import Register from './components/Register';
 import { SOSButton } from './components/SOSButton';
-import Dashboard from './components/ModeratorDashboard/Dashboard';
+import GuardDashboard from './components/GuardDashboard';
+import CallDetails from './components/CallDetails';
 
-function ProtectedApp() {
+function UserApp() {
   const { token, user } = useAuth();
   const phone = user?.phone || '';
-
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
 
   return (
     <div style={{ padding: '2rem', textAlign: 'center' }}>
       <h1>SOS Alert</h1>
       <SOSButton token={token} userPhone={phone} />
-      {user.role === 'moderator' && <Dashboard />}
     </div>
   );
+}
+
+function GuardApp() {
+  return (
+    <div style={{ padding: '1rem' }}>
+      <h1>Панель охраны</h1>
+      <Routes>
+        <Route path="/" element={<GuardDashboard />} />
+        <Route path="/call/:id" element={<CallDetails />} />
+      </Routes>
+    </div>
+  );
+}
+
+function ProtectedRoute() {
+  const { token, user } = useAuth();
+
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return user.role === 'guard' ? <GuardApp /> : <UserApp />;
 }
 
 export default function App() {
@@ -31,7 +49,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginForm />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/*" element={<ProtectedApp />} />
+          <Route path="/*" element={<ProtectedRoute />} />
         </Routes>
       </Router>
     </AuthProvider>
