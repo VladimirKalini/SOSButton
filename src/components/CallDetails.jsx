@@ -369,16 +369,34 @@ const CallDetails = () => {
         
         setConnectionStatus('Ожидание соединения...');
         
+        // Проверяем состояние соединения через некоторое время
+        setTimeout(() => {
+          if (peerRef.current) {
+            const state = peerRef.current.iceConnectionState;
+            addDebugInfo(`Проверка состояния ICE: ${state}`);
+            
+            if (state !== 'connected' && state !== 'completed') {
+              addDebugInfo('Соединение не установлено, пробуем переподключиться');
+              handleReconnect();
+            }
+          }
+        }, 15000);
+        
         // Устанавливаем таймаут для проверки соединения
         setTimeout(() => {
           if (!hasVideo && !hasAudio && peerRef.current) {
             addDebugInfo('Таймаут: нет медиа-треков. Пробуем переподключиться...');
-            handleOffer(); // Пробуем переподключиться
+            handleReconnect(); // Пробуем переподключиться
           }
         }, 10000);
       } catch (err) {
         addDebugInfo(`Ошибка при установке WebRTC соединения: ${err.message}`);
         setError('Не удалось установить видеосвязь: ' + err.message);
+        
+        // Пробуем переподключиться после ошибки
+        setTimeout(() => {
+          handleReconnect();
+        }, 3000);
       }
     };
 
@@ -523,16 +541,37 @@ const CallDetails = () => {
 
   // Принудительное переподключение видеотрансляции
   const handleReconnect = () => {
+    addDebugInfo('Инициирована попытка переподключения вручную');
+    
+    // Проверяем поддержку WebRTC браузером
+    if (!navigator.mediaDevices || !window.RTCPeerConnection) {
+      addDebugInfo('Ошибка: браузер не поддерживает WebRTC');
+      setError('Ваш браузер не поддерживает WebRTC. Попробуйте использовать Chrome или Firefox.');
+      return;
+    }
+    
+    // Закрываем текущее соединение
     if (peerRef.current) {
       peerRef.current.close();
+      peerRef.current = null;
+    }
+    
+    // Очищаем видеоэлемент
+    if (videoRef.current) {
+      if (videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
     }
     
     setHasVideo(false);
     setHasAudio(false);
     setConnectionStatus('Переподключение...');
-    addDebugInfo('Инициирована попытка переподключения вручную');
+    setAutoplayBlocked(false);
     
     // Перезагружаем компонент
+    addDebugInfo('Перезагрузка компонента для переподключения');
     setCall(prev => ({...prev}));
   };
 
@@ -758,6 +797,7 @@ const CallDetails = () => {
                   ref={videoRef} 
                   autoPlay 
                   playsInline
+                  muted={false}
                   controls
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 />
@@ -856,6 +896,21 @@ const CallDetails = () => {
                   }}
                 >
                   Переподключить
+                </button>
+                
+                <button 
+                  onClick={handleManualPlay}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#007bff', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Запустить видео
                 </button>
                 
                 <button 

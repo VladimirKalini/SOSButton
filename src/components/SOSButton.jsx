@@ -56,19 +56,42 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           setSignalingState(currentState);
           console.log('Текущее состояние сигнализации:', currentState);
           
-          // Если состояние stable и нет remoteDescription, можно установить
+          // Если состояние stable или have-local-offer, можно установить
           if (currentState === 'stable' || currentState === 'have-local-offer') {
-            await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-            console.log('Remote description установлен успешно');
-            addDebugMessage('Соединение установлено');
-            
-            // Отправляем сохраненные ICE кандидаты после установки remoteDescription
-            if (sosId) {
-              iceCandidates.forEach(candidate => {
-                socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-                console.log('Отправлен сохраненный ICE кандидат');
-              });
-              setIceCandidates([]);
+            try {
+              await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+              console.log('Remote description установлен успешно');
+              addDebugMessage('Соединение установлено');
+              
+              // Отправляем сохраненные ICE кандидаты после установки remoteDescription
+              if (sosId) {
+                iceCandidates.forEach(candidate => {
+                  socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+                  console.log('Отправлен сохраненный ICE кандидат');
+                });
+                setIceCandidates([]);
+              }
+              
+              // Проверяем, изменилось ли состояние после установки remoteDescription
+              setTimeout(() => {
+                if (peerRef.current && peerRef.current.signalingState === 'have-local-offer') {
+                  console.log('Состояние все еще have-local-offer после установки remoteDescription');
+                  addDebugMessage('Застряли в состоянии have-local-offer, пробуем переподключиться');
+                  
+                  // Принудительно переподключаемся
+                  setTimeout(() => {
+                    reinitializeConnection();
+                  }, 1000);
+                }
+              }, 2000);
+            } catch (error) {
+              console.error('Ошибка при установке remoteDescription:', error);
+              addDebugMessage(`Ошибка при установке соединения: ${error.message}`);
+              
+              // Пробуем переподключиться при ошибке
+              setTimeout(() => {
+                reinitializeConnection();
+              }, 1000);
             }
           } else {
             console.error(`Невозможно установить remoteDescription в состоянии ${currentState}`);
@@ -396,10 +419,23 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         peerRef.current = null;
       }
       
+      // Очищаем видеопоток, если он есть
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+          track.stop();
+        });
+      }
+      
+      // Получаем новый доступ к камере
+      addDebugMessage('Получение нового доступа к камере...');
+      await initializeMedia();
+      
       // Создаем новое WebRTC соединение
+      addDebugMessage('Создание нового WebRTC соединения...');
       const offer = await initializeWebRTC();
       
       // Отправляем новый offer
+      addDebugMessage('Отправка нового SOS сигнала...');
       socketRef.current.emit('sos-offer', { 
         offer, 
         latitude: location.latitude, 
@@ -409,10 +445,24 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         sosId: sosId // Отправляем существующий ID, если есть
       });
       
+      // Сбрасываем состояние сигнализации
+      setSignalingState('new');
+      
       addDebugMessage('Новый SOS сигнал отправлен');
     } catch (err) {
       console.error('Ошибка при переинициализации соединения:', err);
-      addDebugMessage(`Ошибка: ${err.message}`);
+      addDebugMessage(`Ошибка переподключения: ${err.message}`);
+      
+      // В случае ошибки, пробуем еще раз через некоторое время
+      if (reconnectAttempts < maxReconnectAttempts) {
+        addDebugMessage(`Повторная попытка через 3 секунды (${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
+        setTimeout(() => {
+          setReconnectAttempts(prev => prev + 1);
+          reinitializeConnection();
+        }, 3000);
+      } else {
+        addDebugMessage('Достигнуто максимальное количество попыток переподключения');
+      }
     }
   };
 
