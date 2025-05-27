@@ -14,7 +14,6 @@ router.get('/active', roleMiddleware('guard'), async (req, res) => {
   res.json(calls);
 });
 
-// Отменить свой сигнал (пользователь)
 router.delete('/:id', async (req, res) => {
   const sos = await Sos.findById(req.params.id);
   if (!sos) return res.status(404).json({ message: 'Сигнал не найден' });

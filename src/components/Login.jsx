@@ -78,25 +78,24 @@ const styles = {
     textDecoration: 'none',
   },
 };
-
+console.log('Axios baseURL:', axios.defaults.baseURL);
 export default function LoginForm() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { setToken, setUser } = useAuth();
+  const { login } = useAuth();
 
   const handleLogin = async () => {
+    console.log('handleLogin called', { phone, password });
+
     setError('');
     setLoading(true);
     try {
       const { data } = await axios.post('/api/login', { phone, password });
-      setToken(data.token);
-      setUser(data.user);
-      localStorage.setItem('jwtToken', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      navigate('/');
+      login(data.token, data.user);
+      navigate('/', { replace: true });
     } catch (e) {
       setError(
         e.response?.data?.message ||
