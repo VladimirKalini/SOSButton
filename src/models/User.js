@@ -2,7 +2,8 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
-const ROLES = { USER: 'user', MODERATOR: 'moderator' };
+// Исправлено: роль 'moderator' переименована в 'guard' для единообразия
+const ROLES = { USER: 'user', GUARD: 'guard' };
 
 const userSchema = new mongoose.Schema({
   phone: {

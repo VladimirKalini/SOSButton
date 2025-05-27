@@ -1,14 +1,14 @@
 // server.js
 require('debug').disable();
-const express = require('express');
-const http = require('http');
-const path = require('path');
-const mongoose = require('mongoose');
+const express    = require('express');
+const http       = require('http');
+const path       = require('path');
+const mongoose   = require('mongoose');
 const { Server } = require('socket.io');
 
-const authRoutes = require('./src/routes/auth');
+const authRoutes  = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
-const Sos = require('./src/models/Sos');
+const Sos         = require('./src/models/Sos');
 
 const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/sos-app';
 mongoose
@@ -19,11 +19,12 @@ mongoose
     process.exit(1);
   });
 
-const app = express();
+const app        = express();
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: '*' } });
+const io         = new Server(httpServer, { cors: { origin: '*' } });
 
 app.set('io', io);
+
 app.use(express.json());
 app.use('/api', authRoutes);
 app.use('/api/calls', callsRoutes);

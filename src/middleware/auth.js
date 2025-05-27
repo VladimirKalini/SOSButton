@@ -1,3 +1,4 @@
+
 // src/middleware/auth.js
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
@@ -19,6 +20,7 @@ async function authMiddleware(req, res, next) {
   }
 }
 
+// Исправлено: роль 'moderator' переименована в 'guard'
 function roleMiddleware(requiredRole) {
   return (req, res, next) => {
     if (!req.user || req.user.role !== requiredRole) {
