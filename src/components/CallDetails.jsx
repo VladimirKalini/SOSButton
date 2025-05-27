@@ -26,11 +26,21 @@ const CallDetails = () => {
   const [debugInfo, setDebugInfo] = useState('');
   const [showFullDebug, setShowFullDebug] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const processedTracksRef = useRef(new Set()); // Для отслеживания уже обработанных треков
 
   // Добавляем отладочную информацию
   const addDebugInfo = (info) => {
     console.log(info);
-    setDebugInfo(prev => `${prev}\n${info}`);
+    
+    // Ограничиваем количество строк в логе (максимум 100 строк)
+    setDebugInfo(prev => {
+      const lines = prev.split('\n');
+      if (lines.length > 100) {
+        // Оставляем только последние 100 строк
+        return [...lines.slice(lines.length - 99), info].join('\n');
+      }
+      return `${prev}\n${info}`;
+    });
   };
 
   useEffect(() => {
@@ -100,7 +110,17 @@ const CallDetails = () => {
     });
 
     peerRef.current.ontrack = (event) => {
-      addDebugInfo(`Получен медиа-трек: ${event.track.kind}`);
+      // Проверяем, не обрабатывали ли мы уже этот трек
+      const trackId = event.track.id;
+      if (processedTracksRef.current.has(trackId)) {
+        // Трек уже был обработан, пропускаем
+        return;
+      }
+      
+      // Добавляем трек в список обработанных
+      processedTracksRef.current.add(trackId);
+      
+      addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
       
       if (event.track.kind === 'video') {
         setHasVideo(true);
@@ -154,6 +174,13 @@ const CallDetails = () => {
       } else {
         addDebugInfo('Ошибка: videoRef.current отсутствует');
       }
+      
+      // Отслеживаем окончание трека
+      event.track.onended = () => {
+        addDebugInfo(`Трек ${event.track.kind} завершен`);
+        // Удаляем трек из списка обработанных, чтобы можно было обработать новый трек с тем же ID
+        processedTracksRef.current.delete(trackId);
+      };
     };
 
     peerRef.current.oniceconnectionstatechange = () => {
@@ -231,6 +258,9 @@ const CallDetails = () => {
             peerRef.current.close();
           }
           
+          // Очищаем список обработанных треков
+          processedTracksRef.current.clear();
+          
           // Создаем новое соединение
           peerRef.current = new RTCPeerConnection({
             iceServers: [
@@ -246,7 +276,17 @@ const CallDetails = () => {
           
           // Настраиваем обработчики событий
           peerRef.current.ontrack = (event) => {
-            addDebugInfo(`Получен медиа-трек: ${event.track.kind}`);
+            // Проверяем, не обрабатывали ли мы уже этот трек
+            const trackId = event.track.id;
+            if (processedTracksRef.current.has(trackId)) {
+              // Трек уже был обработан, пропускаем
+              return;
+            }
+            
+            // Добавляем трек в список обработанных
+            processedTracksRef.current.add(trackId);
+            
+            addDebugInfo(`Получен медиа-трек после переподключения: ${event.track.kind}, id: ${trackId}`);
             
             if (event.track.kind === 'video') {
               setHasVideo(true);
@@ -260,7 +300,7 @@ const CallDetails = () => {
               
               // Если поток уже установлен, добавляем трек к существующему потоку
               if (currentStream) {
-                addDebugInfo('Добавление трека к существующему потоку');
+                addDebugInfo('Добавление трека к существующему потоку после переподключения');
                 // Не заменяем поток, если он уже есть
               } else {
                 // Устанавливаем новый поток
@@ -293,6 +333,13 @@ const CallDetails = () => {
                 };
               }
             }
+            
+            // Отслеживаем окончание трека
+            event.track.onended = () => {
+              addDebugInfo(`Трек ${event.track.kind} завершен после переподключения`);
+              // Удаляем трек из списка обработанных
+              processedTracksRef.current.delete(trackId);
+            };
           };
           
           peerRef.current.oniceconnectionstatechange = () => {
@@ -549,6 +596,10 @@ const CallDetails = () => {
       setError('Ваш браузер не поддерживает WebRTC. Попробуйте использовать Chrome или Firefox.');
       return;
     }
+    
+    // Очищаем список обработанных треков
+    processedTracksRef.current.clear();
+    addDebugInfo('Список обработанных треков очищен');
     
     // Закрываем текущее соединение
     if (peerRef.current) {
