@@ -21,6 +21,15 @@ const CallDetails = () => {
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [viewMode, setViewMode] = useState('live'); // 'live' или 'recorded'
   const [connectionStatus, setConnectionStatus] = useState('Подключение...');
+  const [hasVideo, setHasVideo] = useState(false);
+  const [hasAudio, setHasAudio] = useState(false);
+  const [debugInfo, setDebugInfo] = useState('');
+
+  // Добавляем отладочную информацию
+  const addDebugInfo = (info) => {
+    console.log(info);
+    setDebugInfo(prev => `${prev}\n${info}`);
+  };
 
   useEffect(() => {
     const fetchCallDetails = async () => {
@@ -70,66 +79,92 @@ const CallDetails = () => {
     // Если выбран режим записанных видео, не инициализируем WebRTC
     if (viewMode === 'recorded') return;
 
-    console.log('Инициализация WebRTC соединения...');
+    addDebugInfo('Инициализация WebRTC соединения...');
     setConnectionStatus('Инициализация соединения...');
+    setHasVideo(false);
+    setHasAudio(false);
 
     // Инициализация WebRTC
     peerRef.current = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
       ]
     });
 
     peerRef.current.ontrack = (event) => {
-      console.log('Получен медиа-трек:', event.track.kind);
+      addDebugInfo(`Получен медиа-трек: ${event.track.kind}`);
+      
+      if (event.track.kind === 'video') {
+        setHasVideo(true);
+      } else if (event.track.kind === 'audio') {
+        setHasAudio(true);
+      }
+      
       if (videoRef.current) {
         videoRef.current.srcObject = event.streams[0];
-        console.log('Видеопоток установлен в элемент video');
-        setConnectionStatus('Соединение установлено');
+        videoRef.current.play().catch(err => {
+          addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
+        });
+        addDebugInfo('Видеопоток установлен в элемент video');
+      } else {
+        addDebugInfo('Ошибка: videoRef.current отсутствует');
       }
     };
 
     peerRef.current.oniceconnectionstatechange = () => {
-      console.log('ICE состояние изменилось:', peerRef.current.iceConnectionState);
-      setConnectionStatus(`ICE состояние: ${peerRef.current.iceConnectionState}`);
+      const state = peerRef.current.iceConnectionState;
+      addDebugInfo(`ICE состояние изменилось: ${state}`);
+      setConnectionStatus(`ICE состояние: ${state}`);
       
-      if (peerRef.current.iceConnectionState === 'failed' || 
-          peerRef.current.iceConnectionState === 'disconnected') {
+      if (state === 'connected' || state === 'completed') {
+        setConnectionStatus('Соединение установлено');
+      } else if (state === 'failed' || state === 'disconnected') {
         setError('Соединение потеряно. Пытаемся восстановить...');
-        // Можно добавить логику переподключения здесь
+        // Пробуем переподключиться
+        setTimeout(() => {
+          if (peerRef.current) {
+            peerRef.current.restartIce();
+            addDebugInfo('Попытка восстановления ICE соединения');
+          }
+        }, 1000);
       }
     };
 
     peerRef.current.onsignalingstatechange = () => {
-      console.log('Signaling состояние:', peerRef.current.signalingState);
+      addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
     };
 
     // Подключение к Socket.IO
     socketRef.current = io(serverUrl, {
       auth: { token },
-      transports: ['websocket']
+      transports: ['websocket', 'polling']
     });
 
     socketRef.current.on('connect', () => {
-      console.log('Socket.IO подключен, присоединяемся к комнате:', id);
+      addDebugInfo(`Socket.IO подключен, присоединяемся к комнате: ${id}`);
       socketRef.current.emit('join-room', id);
     });
 
     socketRef.current.on('connect_error', (err) => {
-      console.error('Ошибка подключения Socket.IO:', err);
+      addDebugInfo(`Ошибка подключения Socket.IO: ${err.message}`);
       setError('Не удалось подключиться к серверу');
     });
 
     socketRef.current.on('ice-candidate', async (candidate) => {
       try {
-        console.log('Получен ICE кандидат от клиента');
-        if (peerRef.current) {
+        addDebugInfo('Получен ICE кандидат от клиента');
+        if (peerRef.current && peerRef.current.remoteDescription) {
           await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-          console.log('ICE кандидат успешно добавлен');
+          addDebugInfo('ICE кандидат успешно добавлен');
+        } else {
+          addDebugInfo('Не удалось добавить ICE кандидата: нет remoteDescription');
         }
       } catch (err) {
-        console.error('Ошибка при добавлении ICE кандидата:', err);
+        addDebugInfo(`Ошибка при добавлении ICE кандидата: ${err.message}`);
       }
     });
 
@@ -141,34 +176,45 @@ const CallDetails = () => {
     // Создание ответа на offer
     const handleOffer = async () => {
       try {
-        console.log('Обработка offer от клиента');
+        addDebugInfo('Обработка offer от клиента');
         
         if (!call.offer) {
-          console.error('Offer отсутствует в данных вызова');
+          addDebugInfo('Offer отсутствует в данных вызова');
           setError('Не удалось установить видеосвязь: отсутствует offer');
           return;
         }
         
         await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
-        console.log('Remote description установлен');
+        addDebugInfo('Remote description установлен');
         
         peerRef.current.onicecandidate = ({ candidate }) => {
           if (candidate) {
-            console.log('Отправка ICE кандидата клиенту');
+            addDebugInfo('Отправка ICE кандидата клиенту');
             socketRef.current.emit('ice-candidate', { candidate, id });
           }
         };
 
-        const answer = await peerRef.current.createAnswer();
+        const answer = await peerRef.current.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
         await peerRef.current.setLocalDescription(answer);
-        console.log('Local description (answer) установлен');
+        addDebugInfo('Local description (answer) установлен');
         
         socketRef.current.emit('sos-answer', { answer, id });
-        console.log('Answer отправлен клиенту');
+        addDebugInfo('Answer отправлен клиенту');
         
         setConnectionStatus('Ожидание соединения...');
+        
+        // Устанавливаем таймаут для проверки соединения
+        setTimeout(() => {
+          if (!hasVideo && !hasAudio && peerRef.current) {
+            addDebugInfo('Таймаут: нет медиа-треков. Пробуем переподключиться...');
+            handleOffer(); // Пробуем переподключиться
+          }
+        }, 10000);
       } catch (err) {
-        console.error('Ошибка при установке WebRTC соединения:', err);
+        addDebugInfo(`Ошибка при установке WebRTC соединения: ${err.message}`);
         setError('Не удалось установить видеосвязь: ' + err.message);
       }
     };
@@ -176,6 +222,7 @@ const CallDetails = () => {
     if (call.offer) {
       handleOffer();
     } else {
+      addDebugInfo('Отсутствует offer для установки соединения');
       setError('Отсутствует offer для установки соединения');
     }
 
@@ -192,10 +239,12 @@ const CallDetails = () => {
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
 
-    // Загрузка Google Maps API
+    // Используем Google Maps API с вашим ключом
+    const googleMapsApiKey = 'AIzaSyD7IrOL7Ck6UVlhAZXXcmVRzAzNQ0kkEbA'; // Замените на ваш ключ
+    
     if (!window.google) {
       const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&callback=initMap`;
       script.async = true;
       script.defer = true;
       
@@ -212,18 +261,30 @@ const CallDetails = () => {
   const initializeMap = (lat, lng) => {
     if (!mapRef.current) return;
 
-    const map = new window.google.maps.Map(mapRef.current, {
-      center: { lat, lng },
-      zoom: 15,
-    });
+    try {
+      const latNum = parseFloat(lat);
+      const lngNum = parseFloat(lng);
+      
+      if (isNaN(latNum) || isNaN(lngNum)) {
+        console.error('Некорректные координаты:', lat, lng);
+        return;
+      }
+      
+      const map = new window.google.maps.Map(mapRef.current, {
+        center: { lat: latNum, lng: lngNum },
+        zoom: 15,
+      });
 
-    const marker = new window.google.maps.Marker({
-      position: { lat, lng },
-      map,
-      title: 'SOS местоположение'
-    });
+      const marker = new window.google.maps.Marker({
+        position: { lat: latNum, lng: lngNum },
+        map,
+        title: 'SOS местоположение'
+      });
 
-    mapMarkerRef.current = marker;
+      mapMarkerRef.current = marker;
+    } catch (error) {
+      console.error('Ошибка при инициализации карты:', error);
+    }
   };
 
   const handleCancelCall = async () => {
@@ -425,10 +486,11 @@ const CallDetails = () => {
                   ref={videoRef} 
                   autoPlay 
                   playsInline
+                  controls
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 />
                 
-                {connectionStatus !== 'Соединение установлено' && (
+                {(!hasVideo && !hasAudio) && (
                   <div style={{
                     position: 'absolute',
                     top: 0,
@@ -444,16 +506,14 @@ const CallDetails = () => {
                     padding: '1rem'
                   }}>
                     <div style={{ marginBottom: '1rem' }}>{connectionStatus}</div>
-                    {connectionStatus !== 'Соединение установлено' && (
-                      <div className="spinner" style={{
-                        width: '40px',
-                        height: '40px',
-                        border: '4px solid rgba(255,255,255,0.3)',
-                        borderRadius: '50%',
-                        borderTop: '4px solid white',
-                        animation: 'spin 1s linear infinite'
-                      }}></div>
-                    )}
+                    <div className="spinner" style={{
+                      width: '40px',
+                      height: '40px',
+                      border: '4px solid rgba(255,255,255,0.3)',
+                      borderRadius: '50%',
+                      borderTop: '4px solid white',
+                      animation: 'spin 1s linear infinite'
+                    }}></div>
                     <style>{`
                       @keyframes spin {
                         0% { transform: rotate(0deg); }
@@ -468,9 +528,26 @@ const CallDetails = () => {
                 marginTop: '0.5rem', 
                 textAlign: 'center',
                 fontSize: '0.9rem',
-                color: connectionStatus === 'Соединение установлено' ? '#28a745' : '#dc3545'
+                color: hasVideo || hasAudio ? '#28a745' : '#dc3545'
               }}>
-                {connectionStatus}
+                {hasVideo || hasAudio ? 'Соединение установлено' : connectionStatus}
+                {hasVideo && <span> (видео)</span>}
+                {hasAudio && <span> (аудио)</span>}
+              </div>
+              
+              <div style={{ 
+                marginTop: '1rem', 
+                fontSize: '0.8rem', 
+                backgroundColor: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '0.25rem',
+                padding: '0.5rem',
+                maxHeight: '100px',
+                overflowY: 'auto',
+                whiteSpace: 'pre-line',
+                display: 'none' // Скрываем отладочную информацию в продакшене
+              }}>
+                {debugInfo}
               </div>
             </div>
           ) : (

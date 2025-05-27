@@ -29,11 +29,13 @@ mongoose
 const app = express();
 const httpServer = http.createServer(app);
 
-// Настройка Socket.IO
+// Настройка Socket.IO с увеличенными таймаутами
 const io = new Server(httpServer, { 
   cors: { origin: '*' },
-  pingTimeout: 60000,
-  transports: ['websocket', 'polling']
+  pingTimeout: 120000, // Увеличиваем таймаут пинга до 2 минут
+  pingInterval: 25000, // Интервал пинга 25 секунд
+  transports: ['websocket', 'polling'],
+  maxHttpBufferSize: 5e6 // 5MB максимальный размер сообщения
 });
 
 // Сохраняем экземпляр io для использования в маршрутах
@@ -41,6 +43,7 @@ app.set('io', io);
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/api', authRoutes);
 app.use('/api/calls', callsRoutes);
 
@@ -64,24 +67,31 @@ app.use((req, res, next) => {
 // Отслеживание активных соединений
 const activeConnections = new Map();
 
+// Функция для логирования с временной меткой
+function logWithTime(message) {
+  const now = new Date().toISOString();
+  console.log(`[${now}] ${message}`);
+}
+
 // Обработка Socket.IO соединений
 io.on('connection', socket => {
   const token = socket.handshake.auth.token;
   if (!token) {
-    console.log('Соединение отклонено: отсутствует токен');
+    logWithTime('Соединение отклонено: отсутствует токен');
     return socket.disconnect();
   }
 
-  console.log(`Новое соединение: ${socket.id}`);
+  logWithTime(`Новое соединение: ${socket.id}`);
   
   // Присоединение к комнате
   socket.on('join-room', room => {
     socket.join(room);
-    console.log(`Socket ${socket.id} присоединился к комнате: ${room}`);
+    logWithTime(`Socket ${socket.id} присоединился к комнате: ${room}`);
     
     // Если это комната guard, добавляем в список активных охранников
     if (room === 'guard') {
       activeConnections.set(socket.id, { type: 'guard', socketId: socket.id });
+      logWithTime(`Охранник ${socket.id} подключился`);
     } else {
       // Проверяем, является ли комната ID вызова SOS
       Sos.findOne({ sosId: room }).then(sos => {
@@ -91,10 +101,13 @@ io.on('connection', socket => {
             sosId: room, 
             socketId: socket.id 
           });
-          console.log(`Клиент ${socket.id} присоединился к SOS вызову ${room}`);
+          logWithTime(`Клиент ${socket.id} присоединился к SOS вызову ${room}`);
+          
+          // Оповещаем всех в комнате о присоединении
+          socket.to(room).emit('user-joined', { id: socket.id, type: 'client' });
         }
       }).catch(err => {
-        console.error('Ошибка при проверке SOS ID:', err);
+        logWithTime(`Ошибка при проверке SOS ID: ${err.message}`);
       });
     }
   });
@@ -102,7 +115,7 @@ io.on('connection', socket => {
   // Обработка SOS сигнала
   socket.on('sos-offer', async ({ offer, latitude, longitude, phone }) => {
     try {
-      console.log(`Получен SOS offer от ${phone}`);
+      logWithTime(`Получен SOS offer от ${phone}`);
       
       // Создание нового SOS вызова
       const doc = new Sos({ phone, latitude, longitude, offer });
@@ -112,7 +125,7 @@ io.on('connection', socket => {
       
       // Отправка подтверждения клиенту
       socket.emit('sos-saved', { id: doc.sosId });
-      console.log(`SOS сохранен с ID: ${doc.sosId}, отправлено подтверждение клиенту`);
+      logWithTime(`SOS сохранен с ID: ${doc.sosId}, отправлено подтверждение клиенту`);
       
       // Присоединяем клиента к комнате с ID вызова
       socket.join(doc.sosId);
@@ -134,16 +147,16 @@ io.on('connection', socket => {
         createdAt: doc.createdAt
       });
       
-      console.log(`Оповещение о новом SOS отправлено охране: ${phone}, ID: ${doc.sosId}`);
+      logWithTime(`Оповещение о новом SOS отправлено охране: ${phone}, ID: ${doc.sosId}`);
     } catch (err) {
-      console.error('Ошибка при обработке SOS offer:', err);
+      logWithTime(`Ошибка при обработке SOS offer: ${err.message}`);
       socket.emit('error', { message: 'Не удалось сохранить SOS сигнал' });
     }
   });
 
   // Обработка ответа на SOS
   socket.on('sos-answer', ({ answer, id }) => {
-    console.log(`Получен ответ на SOS ${id}`);
+    logWithTime(`Получен ответ на SOS ${id}`);
     
     // Отправляем ответ в комнату с ID вызова
     socket.to(id).emit('sos-answer', { answer });
@@ -155,19 +168,29 @@ io.on('connection', socket => {
       activeConnections.set(socket.id, connection);
     }
     
-    console.log(`Ответ отправлен клиенту SOS ${id}`);
+    logWithTime(`Ответ отправлен клиенту SOS ${id}`);
   });
 
   // Обработка ICE кандидатов
   socket.on('ice-candidate', ({ candidate, id }) => {
-    console.log(`Получен ICE кандидат для ${id}`);
-    socket.to(id).emit('ice-candidate', candidate);
-    console.log(`ICE кандидат отправлен для ${id}`);
+    logWithTime(`Получен ICE кандидат для ${id}`);
+    
+    // Проверяем, существует ли комната
+    const room = io.sockets.adapter.rooms.get(id);
+    if (room) {
+      socket.to(id).emit('ice-candidate', candidate);
+      logWithTime(`ICE кандидат отправлен для ${id}, размер комнаты: ${room.size}`);
+    } else {
+      logWithTime(`Ошибка: комната ${id} не существует`);
+      // Создаем комнату, если она не существует
+      socket.join(id);
+      logWithTime(`Создана новая комната: ${id}`);
+    }
   });
 
   // Обработка отключения
   socket.on('disconnect', () => {
-    console.log(`Socket ${socket.id} отключен`);
+    logWithTime(`Socket ${socket.id} отключен`);
     
     // Удаляем из списка активных соединений
     if (activeConnections.has(socket.id)) {
@@ -176,15 +199,24 @@ io.on('connection', socket => {
       
       // Если это был клиент, уведомляем охрану
       if (connection.type === 'client' && connection.sosId) {
-        console.log(`Клиент SOS ${connection.sosId} отключился`);
+        logWithTime(`Клиент SOS ${connection.sosId} отключился`);
+        socket.to('guard').emit('client-disconnected', { 
+          id: connection.sosId,
+          socketId: socket.id
+        });
       }
     }
+  });
+  
+  // Обработка ошибок
+  socket.on('error', (err) => {
+    logWithTime(`Ошибка сокета ${socket.id}: ${err.message}`);
   });
 });
 
 // Запуск сервера
 const PORT = process.env.PORT || 4000;
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`Сервер запущен на 0.0.0.0:${PORT}`);
+  logWithTime(`Сервер запущен на 0.0.0.0:${PORT}`);
 });
 

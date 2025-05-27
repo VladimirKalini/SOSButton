@@ -16,11 +16,12 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const [backgroundMode, setBackgroundMode] = useState(false);
   const wakeLockRef = useRef(null);
   const [debugMessage, setDebugMessage] = useState('');
+  const [iceCandidates, setIceCandidates] = useState([]);
 
   useEffect(() => {
     socketRef.current = io(serverUrl, { 
       auth: { token }, 
-      transports: ['websocket'] 
+      transports: ['websocket', 'polling'] 
     });
 
     socketRef.current.on('connect', () => {
@@ -38,6 +39,14 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         if (peerRef.current && peerRef.current.signalingState !== 'closed') {
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
           console.log('Remote description установлен успешно');
+          
+          if (sosId) {
+            iceCandidates.forEach(candidate => {
+              socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+              console.log('Отправлен сохраненный ICE кандидат');
+            });
+            setIceCandidates([]);
+          }
         }
       } catch (e) {
         console.error('Ошибка при установке ответа:', e);
@@ -72,6 +81,8 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
         startRecording(id);
       }
+      
+      socketRef.current.emit('join-room', id);
     });
 
     return () => {
@@ -79,7 +90,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         socketRef.current.disconnect();
       }
     };
-  }, [serverUrl, token]);
+  }, [serverUrl, token, iceCandidates]);
 
   const startRecording = (id) => {
     try {
@@ -88,7 +99,15 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         return;
       }
       
-      const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+      let options;
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+        options = { mimeType: 'video/webm;codecs=vp9,opus' };
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+        options = { mimeType: 'video/webm;codecs=vp8,opus' };
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        options = { mimeType: 'video/webm' };
+      }
+      
       mediaRecorderRef.current = new MediaRecorder(streamRef.current, options);
       
       const chunks = [];
@@ -170,6 +189,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     setSosId(null);
     setLocation(null);
     setBackgroundMode(false);
+    setIceCandidates([]);
   };
 
   useEffect(() => {
@@ -208,6 +228,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     setError('');
     setDebugMessage('Инициализация SOS...');
     setSending(true);
+    setIceCandidates([]);
 
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -219,14 +240,23 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           await requestWakeLock();
           
           setDebugMessage('Запрашиваем доступ к камере...');
-          streamRef.current = await navigator.mediaDevices.getUserMedia({ 
+          
+          const constraints = { 
             video: { 
               facingMode: 'environment',
               width: { ideal: 1280 },
               height: { ideal: 720 }
             }, 
             audio: true 
-          });
+          };
+          
+          try {
+            streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (err) {
+            console.error('Ошибка при запросе основной камеры:', err);
+            constraints.video = true;
+            streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+          }
           
           if (videoRef.current) {
             videoRef.current.srcObject = streamRef.current;
@@ -238,29 +268,51 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           peerRef.current = new RTCPeerConnection({ 
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' },
+              { urls: 'stun:stun4.l.google.com:19302' }
             ] 
           });
           
           peerRef.current.onicecandidate = ({ candidate }) => {
-            if (candidate && socketRef.current && sosId) {
-              console.log('Отправка ICE кандидата:', candidate);
-              socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+            if (candidate) {
+              console.log('Сгенерирован ICE кандидат:', candidate);
+              
+              if (sosId) {
+                socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+                console.log('ICE кандидат отправлен напрямую');
+              } else {
+                setIceCandidates(prev => [...prev, candidate]);
+                console.log('ICE кандидат сохранен для последующей отправки');
+              }
             }
           };
           
           peerRef.current.oniceconnectionstatechange = () => {
-            console.log('ICE состояние:', peerRef.current.iceConnectionState);
-            setDebugMessage(`ICE состояние: ${peerRef.current.iceConnectionState}`);
+            const state = peerRef.current.iceConnectionState;
+            console.log('ICE состояние:', state);
+            setDebugMessage(`ICE состояние: ${state}`);
+            
+            if (state === 'failed') {
+              if (peerRef.current) {
+                peerRef.current.restartIce();
+                console.log('Попытка восстановления ICE соединения');
+              }
+            }
           };
           
           peerRef.current.onsignalingstatechange = () => {
             console.log('Signaling состояние:', peerRef.current.signalingState);
           };
           
+          peerRef.current.onconnectionstatechange = () => {
+            console.log('Connection состояние:', peerRef.current.connectionState);
+          };
+          
           streamRef.current.getTracks().forEach(track => {
-            peerRef.current.addTrack(track, streamRef.current);
-            console.log('Трек добавлен:', track.kind);
+            const sender = peerRef.current.addTrack(track, streamRef.current);
+            console.log(`Трек добавлен: ${track.kind}, enabled: ${track.enabled}`);
           });
           
           setDebugMessage('WebRTC соединение инициализировано');
