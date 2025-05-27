@@ -17,6 +17,9 @@ const CallDetails = () => {
   const serverUrl = 'https://1fxpro.vip';
   const mapRef = useRef(null);
   const mapMarkerRef = useRef(null);
+  const [recordedVideos, setRecordedVideos] = useState([]);
+  const [selectedVideo, setSelectedVideo] = useState(null);
+  const [viewMode, setViewMode] = useState('live'); // 'live' или 'recorded'
 
   useEffect(() => {
     const fetchCallDetails = async () => {
@@ -27,6 +30,11 @@ const CallDetails = () => {
         });
         setCall(response.data);
         setError('');
+        
+        // Загружаем записанные видео
+        if (response.data.recordingStarted) {
+          fetchRecordedVideos();
+        }
       } catch (err) {
         setError('Не удалось загрузить данные вызова');
         console.error(err);
@@ -37,9 +45,29 @@ const CallDetails = () => {
 
     fetchCallDetails();
   }, [id, token]);
+  
+  // Получение списка записанных видео
+  const fetchRecordedVideos = async () => {
+    try {
+      const response = await axios.get(`/api/calls/${id}/video`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setRecordedVideos(response.data);
+      
+      // Автоматически выбираем первое видео, если есть
+      if (response.data.length > 0) {
+        setSelectedVideo(response.data[0]);
+      }
+    } catch (err) {
+      console.error('Не удалось загрузить записанные видео:', err);
+    }
+  };
 
   useEffect(() => {
     if (!call) return;
+
+    // Если выбран режим записанных видео, не инициализируем WebRTC
+    if (viewMode === 'recorded') return;
 
     // Инициализация WebRTC
     peerRef.current = new RTCPeerConnection({
@@ -104,7 +132,7 @@ const CallDetails = () => {
         socketRef.current.disconnect();
       }
     };
-  }, [call, id, token, navigate, serverUrl]);
+  }, [call, id, token, navigate, serverUrl, viewMode]);
 
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
@@ -153,6 +181,21 @@ const CallDetails = () => {
       setError('Не удалось отменить вызов');
       console.error(err);
     }
+  };
+  
+  // Переключение между режимами просмотра
+  const toggleViewMode = () => {
+    setViewMode(viewMode === 'live' ? 'recorded' : 'live');
+    
+    // Если переключаемся на записанные видео, загружаем их
+    if (viewMode === 'live' && call?.recordingStarted) {
+      fetchRecordedVideos();
+    }
+  };
+  
+  // Выбор видео для просмотра
+  const handleSelectVideo = (video) => {
+    setSelectedVideo(video);
   };
 
   if (loading) {
@@ -290,23 +333,107 @@ const CallDetails = () => {
           padding: '1rem',
           backgroundColor: '#f8f9fa'
         }}>
-          <h3>Видеотрансляция</h3>
-          <div style={{ 
-            backgroundColor: '#000', 
-            borderRadius: '0.25rem',
-            height: '400px',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            overflow: 'hidden'
-          }}>
-            <video 
-              ref={videoRef} 
-              autoPlay 
-              playsInline
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3>Видеотрансляция</h3>
+            
+            {call.recordingStarted && (
+              <button 
+                onClick={toggleViewMode}
+                style={{ 
+                  padding: '0.5rem 1rem', 
+                  backgroundColor: '#007bff', 
+                  color: 'white', 
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem'
+                }}
+              >
+                {viewMode === 'live' ? 'Архивные записи' : 'Прямая трансляция'}
+              </button>
+            )}
           </div>
+          
+          {viewMode === 'live' ? (
+            <div style={{ 
+              backgroundColor: '#000', 
+              borderRadius: '0.25rem',
+              height: '400px',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              overflow: 'hidden'
+            }}>
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                playsInline
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            </div>
+          ) : (
+            <div>
+              {recordedVideos.length > 0 ? (
+                <div>
+                  <div style={{ 
+                    backgroundColor: '#000', 
+                    borderRadius: '0.25rem',
+                    height: '300px',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    overflow: 'hidden',
+                    marginBottom: '1rem'
+                  }}>
+                    {selectedVideo && (
+                      <video 
+                        src={selectedVideo.url} 
+                        controls 
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                      />
+                    )}
+                  </div>
+                  
+                  <div style={{ 
+                    maxHeight: '150px', 
+                    overflowY: 'auto',
+                    border: '1px solid #dee2e6',
+                    borderRadius: '0.25rem',
+                    padding: '0.5rem'
+                  }}>
+                    <h4>Доступные записи:</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {recordedVideos.map((video, index) => (
+                        <div 
+                          key={index}
+                          onClick={() => handleSelectVideo(video)}
+                          style={{ 
+                            padding: '0.5rem',
+                            backgroundColor: selectedVideo === video ? '#e2f0ff' : 'transparent',
+                            borderRadius: '0.25rem',
+                            cursor: 'pointer',
+                            border: '1px solid #dee2e6'
+                          }}
+                        >
+                          {new Date(parseInt(video.name.split('_')[1])).toLocaleString()}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'center', 
+                  alignItems: 'center', 
+                  height: '400px',
+                  color: '#6c757d'
+                }}>
+                  Записи не найдены
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

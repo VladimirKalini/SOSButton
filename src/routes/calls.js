@@ -2,8 +2,32 @@
 const express = require('express');
 const Sos = require('../models/Sos');
 const { authMiddleware, roleMiddleware } = require('../middleware/auth');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 
 const router = express.Router();
+
+// Настройка хранилища для multer
+const storage = multer.diskStorage({
+  destination: function(req, file, cb) {
+    const uploadsDir = path.join(__dirname, '../../uploads/videos');
+    
+    // Создаем директорию, если она не существует
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    
+    cb(null, uploadsDir);
+  },
+  filename: function(req, file, cb) {
+    const sosId = req.body.sosId;
+    // Генерируем уникальное имя файла с временной меткой
+    cb(null, `${sosId}_${Date.now()}.webm`);
+  }
+});
+
+const upload = multer({ storage: storage });
 
 router.use(authMiddleware);
 
@@ -81,6 +105,78 @@ router.get('/history', roleMiddleware('guard'), async (req, res) => {
     res.json(calls);
   } catch (err) {
     console.error('Ошибка при получении истории вызовов:', err);
+    res.status(500).json({ message: 'Ошибка сервера' });
+  }
+});
+
+// Запись видео с устройства пользователя
+router.post('/record', upload.single('videoChunk'), async (req, res) => {
+  try {
+    const { sosId } = req.body;
+    const sos = await Sos.findOne({ sosId: sosId });
+    
+    if (!sos) {
+      // Удаляем загруженный файл, если вызов не найден
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(404).json({ message: 'SOS-вызов не найден' });
+    }
+    
+    // Создаем директорию для видео этого вызова, если еще не создана
+    const sosDir = path.join(__dirname, '../../uploads/videos', sosId);
+    if (!fs.existsSync(sosDir)) {
+      fs.mkdirSync(sosDir, { recursive: true });
+    }
+    
+    // Перемещаем файл в директорию вызова
+    const newPath = path.join(sosDir, req.file.filename);
+    fs.renameSync(req.file.path, newPath);
+    
+    // Обновляем запись в базе данных
+    if (!sos.recordingStarted) {
+      sos.recordingStarted = true;
+      sos.videoPath = sosDir;
+      await sos.save();
+    }
+    
+    res.status(200).json({ message: 'Видеофрагмент успешно сохранен' });
+  } catch (err) {
+    console.error('Ошибка при сохранении видео:', err);
+    res.status(500).json({ message: 'Ошибка сервера' });
+  }
+});
+
+// Получить записанное видео (только охрана)
+router.get('/:id/video', roleMiddleware('guard'), async (req, res) => {
+  try {
+    const sos = await Sos.findById(req.params.id);
+    
+    if (!sos || !sos.videoPath) {
+      return res.status(404).json({ message: 'Видео не найдено' });
+    }
+    
+    // Получаем список файлов в директории
+    const videoDir = sos.videoPath;
+    fs.readdir(videoDir, (err, files) => {
+      if (err) {
+        console.error('Ошибка при чтении директории с видео:', err);
+        return res.status(500).json({ message: 'Ошибка сервера' });
+      }
+      
+      // Сортируем файлы по времени создания
+      const videoFiles = files
+        .filter(file => file.endsWith('.webm'))
+        .map(file => ({
+          name: file,
+          path: path.join(videoDir, file),
+          url: `/uploads/videos/${sos.sosId}/${file}`
+        }));
+      
+      res.json(videoFiles);
+    });
+  } catch (err) {
+    console.error('Ошибка при получении видео:', err);
     res.status(500).json({ message: 'Ошибка сервера' });
   }
 });

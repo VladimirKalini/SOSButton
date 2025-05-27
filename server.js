@@ -6,6 +6,14 @@ const { Server } = require('socket.io');
 const authRoutes = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
 const Sos = require('./src/models/Sos');
+const fs = require('fs');
+
+// Создание директории для загрузки видео
+const uploadsDir = path.join(__dirname, 'uploads/videos');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('Создана директория для загрузки видео:', uploadsDir);
+}
 
 // Подключение к MongoDB
 const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/sos-app';

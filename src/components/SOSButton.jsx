@@ -7,11 +7,14 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const peerRef = useRef(null);
   const streamRef = useRef(null);
   const videoRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [sosId, setSosId] = useState(null);
   const [location, setLocation] = useState(null);
+  const [backgroundMode, setBackgroundMode] = useState(false);
+  const wakeLockRef = useRef(null);
 
   useEffect(() => {
     socketRef.current = io(serverUrl, { 
@@ -31,21 +34,78 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       peerRef.current?.addIceCandidate(candidate).catch(() => {}); 
     });
     socketRef.current.on('sos-canceled', () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-      if (peerRef.current) {
-        peerRef.current.close();
-      }
-      setSending(false);
-      setStreaming(false);
-      setSosId(null);
-      setLocation(null);
+      releaseWakeLock();
+      stopStreaming();
       setError('SOS вызов был отменен охраной');
     });
 
     return () => socketRef.current.disconnect();
   }, [serverUrl, token]);
+
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        console.log('Wake Lock активирован');
+        
+        wakeLockRef.current.addEventListener('release', () => {
+          console.log('Wake Lock был отключен');
+        });
+      } catch (err) {
+        console.error(`Ошибка при запросе Wake Lock: ${err.name}, ${err.message}`);
+      }
+    } else {
+      console.warn('Wake Lock API не поддерживается в этом браузере.');
+    }
+  };
+
+  const releaseWakeLock = () => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release()
+        .then(() => {
+          wakeLockRef.current = null;
+        })
+        .catch((err) => {
+          console.error(`Ошибка при освобождении Wake Lock: ${err.name}, ${err.message}`);
+        });
+    }
+  };
+
+  const stopStreaming = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    
+    if (peerRef.current) {
+      peerRef.current.close();
+    }
+    
+    setSending(false);
+    setStreaming(false);
+    setSosId(null);
+    setLocation(null);
+    setBackgroundMode(false);
+  };
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && streaming) {
+        setBackgroundMode(true);
+      } else if (document.visibilityState === 'visible' && backgroundMode) {
+        setBackgroundMode(false);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [streaming, backgroundMode]);
 
   const handleSOS = async () => {
     if (sending && sosId) {
@@ -54,18 +114,8 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           headers: { Authorization: `Bearer ${token}` }
         });
         
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-        }
-        
-        if (peerRef.current) {
-          peerRef.current.close();
-        }
-        
-        setSending(false);
-        setStreaming(false);
-        setSosId(null);
-        setLocation(null);
+        releaseWakeLock();
+        stopStreaming();
         return;
       } catch (err) {
         setError('Не удалось отменить SOS вызов');
@@ -83,9 +133,15 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         setLocation({ latitude, longitude });
         
         try {
+          await requestWakeLock();
+          
           if (!streamRef.current) {
             streamRef.current = await navigator.mediaDevices.getUserMedia({ 
-              video: true, 
+              video: { 
+                facingMode: 'environment',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+              }, 
               audio: true 
             });
             
@@ -117,6 +173,31 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             longitude, 
             phone: userPhone 
           });
+          
+          const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+          mediaRecorderRef.current = new MediaRecorder(streamRef.current, options);
+          
+          const chunks = [];
+          mediaRecorderRef.current.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+              chunks.push(e.data);
+              
+              if (sosId) {
+                const formData = new FormData();
+                formData.append('videoChunk', new Blob([e.data], { type: 'video/webm' }));
+                formData.append('sosId', sosId);
+                
+                axios.post('/api/calls/record', formData, {
+                  headers: { 
+                    'Content-Type': 'multipart/form-data',
+                    Authorization: `Bearer ${token}`
+                  }
+                }).catch(err => console.error('Ошибка при отправке видео:', err));
+              }
+            }
+          };
+          
+          mediaRecorderRef.current.start(10000);
           
           socketRef.current.once('sos-saved', ({ id }) => setSosId(id));
           setStreaming(true);
@@ -204,12 +285,12 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             marginBottom: '0.5rem',
             textAlign: 'center'
           }}>
-            Идет запись с камеры
+            {backgroundMode ? 'Запись продолжается в фоновом режиме' : 'Идет запись с камеры'}
           </div>
         </div>
       )}
       
-      {streaming && (
+      {streaming && !backgroundMode && (
         <div style={{ 
           width: '100%', 
           maxWidth: '300px',
