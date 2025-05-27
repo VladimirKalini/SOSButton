@@ -24,6 +24,7 @@ const CallDetails = () => {
   const [hasVideo, setHasVideo] = useState(false);
   const [hasAudio, setHasAudio] = useState(false);
   const [debugInfo, setDebugInfo] = useState('');
+  const [showFullDebug, setShowFullDebug] = useState(false);
 
   // Добавляем отладочную информацию
   const addDebugInfo = (info) => {
@@ -92,7 +93,9 @@ const CallDetails = () => {
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' }
-      ]
+      ],
+      iceTransportPolicy: 'all',
+      iceCandidatePoolSize: 10
     });
 
     peerRef.current.ontrack = (event) => {
@@ -138,10 +141,17 @@ const CallDetails = () => {
       addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
     };
 
+    peerRef.current.onconnectionstatechange = () => {
+      addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
+    };
+
     // Подключение к Socket.IO
     socketRef.current = io(serverUrl, {
       auth: { token },
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 20000
     });
 
     socketRef.current.on('connect', () => {
@@ -171,6 +181,89 @@ const CallDetails = () => {
     socketRef.current.on('sos-canceled', () => {
       setError('SOS вызов был отменен');
       setTimeout(() => navigate('/'), 3000);
+    });
+
+    // Обработка переподключения клиента
+    socketRef.current.on('sos-reconnect', async ({ offer, id: reconnectId }) => {
+      addDebugInfo(`Получен запрос на переподключение от клиента: ${reconnectId}`);
+      if (reconnectId === id) {
+        try {
+          // Закрываем текущее соединение
+          if (peerRef.current) {
+            peerRef.current.close();
+          }
+          
+          // Создаем новое соединение
+          peerRef.current = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' },
+              { urls: 'stun:stun4.l.google.com:19302' }
+            ],
+            iceTransportPolicy: 'all',
+            iceCandidatePoolSize: 10
+          });
+          
+          // Настраиваем обработчики событий
+          peerRef.current.ontrack = (event) => {
+            addDebugInfo(`Получен медиа-трек: ${event.track.kind}`);
+            
+            if (event.track.kind === 'video') {
+              setHasVideo(true);
+            } else if (event.track.kind === 'audio') {
+              setHasAudio(true);
+            }
+            
+            if (videoRef.current) {
+              videoRef.current.srcObject = event.streams[0];
+              videoRef.current.play().catch(err => {
+                addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
+              });
+              addDebugInfo('Видеопоток установлен в элемент video');
+            }
+          };
+          
+          peerRef.current.oniceconnectionstatechange = () => {
+            const state = peerRef.current.iceConnectionState;
+            addDebugInfo(`ICE состояние изменилось: ${state}`);
+            setConnectionStatus(`ICE состояние: ${state}`);
+          };
+          
+          peerRef.current.onsignalingstatechange = () => {
+            addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
+          };
+          
+          peerRef.current.onicecandidate = ({ candidate }) => {
+            if (candidate) {
+              addDebugInfo('Отправка ICE кандидата клиенту');
+              socketRef.current.emit('ice-candidate', { candidate, id });
+            }
+          };
+          
+          // Устанавливаем удаленное описание
+          await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+          addDebugInfo('Remote description установлен');
+          
+          // Создаем ответ
+          const answer = await peerRef.current.createAnswer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+          });
+          await peerRef.current.setLocalDescription(answer);
+          addDebugInfo('Local description (answer) установлен');
+          
+          // Отправляем ответ клиенту
+          socketRef.current.emit('sos-answer', { answer, id });
+          addDebugInfo('Answer отправлен клиенту после переподключения');
+          
+          setConnectionStatus('Ожидание соединения после переподключения...');
+        } catch (err) {
+          addDebugInfo(`Ошибка при переподключении: ${err.message}`);
+          setError('Не удалось переподключиться: ' + err.message);
+        }
+      }
     });
 
     // Создание ответа на offer
@@ -226,6 +319,11 @@ const CallDetails = () => {
       setError('Отсутствует offer для установки соединения');
     }
 
+    // Обработка пинга для поддержания соединения
+    socketRef.current.on('ping', () => {
+      socketRef.current.emit('pong');
+    });
+
     return () => {
       if (peerRef.current) {
         peerRef.current.close();
@@ -234,7 +332,7 @@ const CallDetails = () => {
         socketRef.current.disconnect();
       }
     };
-  }, [call, id, token, navigate, serverUrl, viewMode]);
+  }, [call, id, token, navigate, serverUrl, viewMode, hasVideo, hasAudio]);
 
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
@@ -242,8 +340,10 @@ const CallDetails = () => {
     // Используем OpenStreetMap вместо Google Maps (не требует API ключа)
     const createMapWithOSM = () => {
       try {
+        addDebugInfo('Инициализация карты OpenStreetMap...');
         // Проверяем, загружен ли Leaflet
         if (!window.L) {
+          addDebugInfo('Загрузка библиотеки Leaflet...');
           // Загружаем CSS для Leaflet
           const linkElement = document.createElement('link');
           linkElement.rel = 'stylesheet';
@@ -258,6 +358,7 @@ const CallDetails = () => {
           script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
           script.crossOrigin = '';
           script.onload = () => {
+            addDebugInfo('Библиотека Leaflet загружена');
             initializeOSMap(call.latitude, call.longitude);
           };
           document.head.appendChild(script);
@@ -266,18 +367,24 @@ const CallDetails = () => {
         }
       } catch (error) {
         console.error('Ошибка при создании карты:', error);
+        addDebugInfo(`Ошибка при создании карты: ${error.message}`);
       }
     };
 
     const initializeOSMap = (lat, lng) => {
-      if (!mapRef.current) return;
+      if (!mapRef.current) {
+        addDebugInfo('Ошибка: mapRef.current отсутствует');
+        return;
+      }
       
       try {
+        addDebugInfo(`Инициализация карты с координатами: ${lat}, ${lng}`);
         const latNum = parseFloat(lat);
         const lngNum = parseFloat(lng);
         
         if (isNaN(latNum) || isNaN(lngNum)) {
           console.error('Некорректные координаты:', lat, lng);
+          addDebugInfo(`Некорректные координаты: ${lat}, ${lng}`);
           return;
         }
         
@@ -299,8 +406,18 @@ const CallDetails = () => {
         mapMarkerRef.current = marker;
         
         console.log('Карта OpenStreetMap успешно инициализирована');
+        addDebugInfo('Карта успешно инициализирована');
+        
+        // Принудительно обновляем размер карты после рендеринга
+        setTimeout(() => {
+          if (map) {
+            map.invalidateSize();
+            addDebugInfo('Размер карты обновлен');
+          }
+        }, 500);
       } catch (error) {
         console.error('Ошибка при инициализации карты:', error);
+        addDebugInfo(`Ошибка при инициализации карты: ${error.message}`);
       }
     };
     
@@ -343,9 +460,20 @@ const CallDetails = () => {
     setHasVideo(false);
     setHasAudio(false);
     setConnectionStatus('Переподключение...');
+    addDebugInfo('Инициирована попытка переподключения вручную');
     
     // Перезагружаем компонент
     setCall(prev => ({...prev}));
+  };
+
+  // Очистка отладочной информации
+  const clearDebugInfo = () => {
+    setDebugInfo('');
+  };
+
+  // Отображение отладочной информации в модальном окне
+  const toggleDebugModal = () => {
+    setShowFullDebug(!showFullDebug);
   };
 
   if (loading) {
@@ -589,19 +717,68 @@ const CallDetails = () => {
                 {hasAudio && <span> (аудио)</span>}
               </div>
               
-              <div style={{ 
-                marginTop: '1rem', 
-                fontSize: '0.8rem', 
-                backgroundColor: '#f8f9fa',
-                border: '1px solid #dee2e6',
-                borderRadius: '0.25rem',
-                padding: '0.5rem',
-                maxHeight: '100px',
-                overflowY: 'auto',
-                whiteSpace: 'pre-line'
-              }}>
-                {debugInfo}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem' }}>
+                <button 
+                  onClick={handleReconnect}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#28a745', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Переподключить
+                </button>
+                
+                <button 
+                  onClick={toggleDebugModal}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#6c757d', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  {showFullDebug ? 'Скрыть отладку' : 'Показать отладку'}
+                </button>
+                
+                <button 
+                  onClick={clearDebugInfo}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#dc3545', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Очистить лог
+                </button>
               </div>
+              
+              {showFullDebug && (
+                <div style={{ 
+                  marginTop: '1rem', 
+                  fontSize: '0.8rem', 
+                  backgroundColor: '#f8f9fa',
+                  border: '1px solid #dee2e6',
+                  borderRadius: '0.25rem',
+                  padding: '0.5rem',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                  whiteSpace: 'pre-line'
+                }}>
+                  {debugInfo}
+                </div>
+              )}
             </div>
           ) : (
             <div>

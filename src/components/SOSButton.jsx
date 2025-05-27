@@ -19,6 +19,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const [iceCandidates, setIceCandidates] = useState([]);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const maxReconnectAttempts = 3;
+  const [signalingState, setSignalingState] = useState('stable');
 
   // Функция для логирования
   const addDebugMessage = (message) => {
@@ -49,22 +50,38 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         console.log('Получен ответ SOS:', answer);
         addDebugMessage('Получен ответ от охраны');
         
-        if (peerRef.current && peerRef.current.signalingState !== 'closed') {
-          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('Remote description установлен успешно');
-          addDebugMessage('Соединение установлено');
+        if (peerRef.current) {
+          // Проверяем текущее состояние соединения
+          const currentState = peerRef.current.signalingState;
+          setSignalingState(currentState);
+          console.log('Текущее состояние сигнализации:', currentState);
           
-          // Отправляем сохраненные ICE кандидаты после установки remoteDescription
-          if (sosId) {
-            iceCandidates.forEach(candidate => {
-              socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-              console.log('Отправлен сохраненный ICE кандидат');
-            });
-            setIceCandidates([]);
+          // Если состояние stable и нет remoteDescription, можно установить
+          if (currentState === 'stable' || currentState === 'have-local-offer') {
+            await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('Remote description установлен успешно');
+            addDebugMessage('Соединение установлено');
+            
+            // Отправляем сохраненные ICE кандидаты после установки remoteDescription
+            if (sosId) {
+              iceCandidates.forEach(candidate => {
+                socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+                console.log('Отправлен сохраненный ICE кандидат');
+              });
+              setIceCandidates([]);
+            }
+          } else {
+            console.error(`Невозможно установить remoteDescription в состоянии ${currentState}`);
+            addDebugMessage(`Ошибка: неверное состояние соединения ${currentState}`);
+            
+            // Если состояние не подходит, пробуем переинициализировать соединение
+            setTimeout(() => {
+              reinitializeConnection();
+            }, 1000);
           }
         } else {
-          console.error('Не удалось установить remoteDescription: peer закрыт или не инициализирован');
-          addDebugMessage('Ошибка установки соединения');
+          console.error('Не удалось установить remoteDescription: peer не инициализирован');
+          addDebugMessage('Ошибка: соединение не инициализировано');
           
           // Пробуем переподключиться
           if (reconnectAttempts < maxReconnectAttempts) {
@@ -78,6 +95,15 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       } catch (e) {
         console.error('Ошибка при установке ответа:', e);
         addDebugMessage(`Ошибка: ${e.message}`);
+        
+        // Если произошла ошибка, пробуем переинициализировать соединение
+        if (reconnectAttempts < maxReconnectAttempts) {
+          addDebugMessage('Ошибка соединения. Попытка переподключения...');
+          setTimeout(() => {
+            reinitializeConnection();
+            setReconnectAttempts(prev => prev + 1);
+          }, 2000);
+        }
       } 
     });
     
@@ -89,6 +115,8 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           console.log('ICE кандидат добавлен успешно');
         } else {
           console.warn('Не удалось добавить ICE кандидата: peer не инициализирован или нет remoteDescription');
+          // Сохраняем кандидата для последующего добавления
+          setIceCandidates(prev => [...prev, candidate]);
         }
       } catch (err) {
         console.error('Ошибка при добавлении ICE кандидата:', err);
@@ -112,6 +140,11 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       }
       
       socketRef.current.emit('join-room', id);
+    });
+
+    // Обработка пинга для поддержания соединения
+    socketRef.current.on('ping', () => {
+      socketRef.current.emit('pong');
     });
 
     return () => {
@@ -174,8 +207,10 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       
       mediaRecorderRef.current.start(10000);
       console.log('Запись видео начата');
+      addDebugMessage('Запись видео начата');
     } catch (err) {
       console.error('Ошибка при запуске записи:', err);
+      addDebugMessage(`Ошибка записи: ${err.message}`);
     }
   };
 
@@ -235,6 +270,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     setBackgroundMode(false);
     setIceCandidates([]);
     setReconnectAttempts(0);
+    setSignalingState('stable');
   };
 
   useEffect(() => {
@@ -306,7 +342,9 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       };
       
       peerRef.current.onsignalingstatechange = () => {
-        console.log('Signaling состояние:', peerRef.current.signalingState);
+        const state = peerRef.current.signalingState;
+        console.log('Signaling состояние:', state);
+        setSignalingState(state);
       };
       
       peerRef.current.onconnectionstatechange = () => {
@@ -336,6 +374,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       
       await peerRef.current.setLocalDescription(offer);
       console.log('Local description установлен:', offer);
+      setSignalingState(peerRef.current.signalingState);
       
       return offer;
     } catch (err) {
@@ -350,6 +389,12 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     
     try {
       addDebugMessage('Переинициализация соединения...');
+      
+      // Закрываем текущее соединение
+      if (peerRef.current) {
+        peerRef.current.close();
+        peerRef.current = null;
+      }
       
       // Создаем новое WebRTC соединение
       const offer = await initializeWebRTC();
@@ -436,6 +481,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     setSending(true);
     setIceCandidates([]);
     setReconnectAttempts(0);
+    setSignalingState('stable');
 
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -558,16 +604,23 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             {backgroundMode ? 'Запись продолжается в фоновом режиме' : 'Идет запись с камеры'}
           </div>
           
-          {debugMessage && (
-            <div style={{ 
-              fontSize: '0.8rem', 
-              color: '#6c757d',
-              textAlign: 'center',
-              marginTop: '0.5rem'
-            }}>
-              {debugMessage}
-            </div>
-          )}
+          <div style={{ 
+            fontSize: '0.8rem', 
+            color: '#6c757d',
+            textAlign: 'center',
+            marginTop: '0.5rem'
+          }}>
+            {debugMessage}
+          </div>
+          
+          <div style={{ 
+            fontSize: '0.8rem', 
+            color: '#6c757d',
+            textAlign: 'center',
+            marginTop: '0.5rem'
+          }}>
+            Состояние: {signalingState}
+          </div>
           
           {reconnectAttempts > 0 && (
             <div style={{ 
@@ -578,6 +631,25 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             }}>
               Попыток переподключения: {reconnectAttempts} из {maxReconnectAttempts}
             </div>
+          )}
+          
+          {streaming && (
+            <button
+              onClick={reinitializeConnection}
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                backgroundColor: '#007bff',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '0.25rem',
+                cursor: 'pointer',
+                marginTop: '0.5rem',
+                fontSize: '0.9rem'
+              }}
+            >
+              Переподключиться
+            </button>
           )}
         </div>
       )}
