@@ -94,8 +94,12 @@ export default function LoginForm() {
     setLoading(true);
     try {
       const { data } = await axios.post('/api/login', { phone, password });
-      login(data.token, data.user);
-      navigate('/', { replace: true });
+      login(data.token, data.user); 
+      if (data.user.role === 'guard') { 
+        navigate('/guard', { replace: true }); 
+      } else { 
+        navigate('/user', { replace: true }); 
+      }
     } catch (e) {
       setError(
         e.response?.data?.message ||
