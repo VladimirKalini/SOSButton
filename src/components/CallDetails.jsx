@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../authContext';
 import { io } from 'socket.io-client';
+import { checkWebRTCSupport, diagnoseWebRTCError, getWebRTCDebugInfo, fixCommonWebRTCIssues, checkNetworkForWebRTC } from '../scripts/webrtcErrorHandler';
 
 const CallDetails = () => {
   const { id } = useParams();
@@ -540,9 +541,42 @@ const CallDetails = () => {
       // Настраиваем обработчики для сокета
       setupSocketHandlers();
       
+      // Создаем новое WebRTC соединение
+      peerRef.current = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { 
+            urls: 'turn:numb.viagenie.ca',
+            username: 'webrtc@live.com',
+            credential: 'muazkh'
+          },
+          {
+            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+            username: 'webrtc',
+            credential: 'webrtc'
+          }
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        iceTransportPolicy: 'all'
+      });
+      
+      // Настраиваем обработчики для peer connection
+      setupPeerHandlers();
+      addDebugInfo('Новое WebRTC соединение создано');
+      
       // Обрабатываем offer, если он есть
       if (response.data.offer) {
         try {
+          // Проверяем, что peerRef.current существует
+          if (!peerRef.current) {
+            addDebugInfo('Ошибка: peerRef.current отсутствует при обработке offer');
+            setError('Не удалось установить видеосвязь: соединение не инициализировано');
+            return;
+          }
+          
           // Устанавливаем удаленное описание (offer)
           peerRef.current.setRemoteDescription(new RTCSessionDescription(response.data.offer))
             .then(() => {
@@ -563,8 +597,13 @@ const CallDetails = () => {
               addDebugInfo('Local description (answer) установлен при переподключении');
               
               // Отправляем ответ клиенту
-              socketRef.current.emit('sos-answer', { answer, id });
-              addDebugInfo('Answer отправлен клиенту при переподключении');
+              if (socketRef.current) {
+                socketRef.current.emit('sos-answer', { answer, id });
+                addDebugInfo('Answer отправлен клиенту при переподключении');
+              } else {
+                addDebugInfo('Ошибка: socketRef.current отсутствует при отправке ответа');
+                setError('Не удалось отправить ответ: соединение с сокетом не инициализировано');
+              }
               
               setConnectionStatus('Ожидание соединения после переподключения...');
             })
@@ -915,53 +954,225 @@ const CallDetails = () => {
       processedTracksRef.current.clear();
       pendingIceCandidatesRef.current = [];
       
-      // Создаем новое WebRTC соединение
-      peerRef.current = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
-        ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'all'
-      });
+      // Создаем новое соединение с сокетом, если оно не существует
+      if (!socketRef.current) {
+        try {
+          socketRef.current = io(serverUrl, {
+            auth: { token },
+            transports: ['polling', 'websocket'], // Сначала polling, затем websocket
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            timeout: 30000,
+            forceNew: true,
+            upgrade: true
+          });
+          
+          // Настраиваем обработчики для сокета
+          setupSocketHandlers();
+          addDebugInfo('Новое Socket.IO соединение создано');
+        } catch (err) {
+          addDebugInfo(`Ошибка при создании Socket.IO соединения: ${err.message}`);
+          throw new Error(`Не удалось создать соединение с сокетом: ${err.message}`);
+        }
+      }
       
-      // Настраиваем обработчики для WebRTC
-      setupPeerHandlers();
+      // Создаем новое WebRTC соединение
+      try {
+        peerRef.current = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { 
+              urls: 'turn:numb.viagenie.ca',
+              username: 'webrtc@live.com',
+              credential: 'muazkh'
+            },
+            {
+              urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+              username: 'webrtc',
+              credential: 'webrtc'
+            }
+          ],
+          iceCandidatePoolSize: 10,
+          bundlePolicy: 'max-bundle',
+          rtcpMuxPolicy: 'require',
+          iceTransportPolicy: 'all'
+        });
+        
+        // Настраиваем обработчики для peer connection
+        setupPeerHandlers();
+        addDebugInfo('Новое WebRTC соединение создано');
+      } catch (err) {
+        addDebugInfo(`Ошибка при создании WebRTC соединения: ${err.message}`);
+        throw new Error(`Не удалось создать WebRTC соединение: ${err.message}`);
+      }
       
       // Проверяем, что offer имеет правильный формат
       if (!offer || !offer.type || !offer.sdp) {
         addDebugInfo('Ошибка: полученный offer имеет некорректный формат');
-        setError('Некорректный формат offer от клиента');
-        return;
+        throw new Error('Некорректный формат offer от клиента');
       }
       
-      // Устанавливаем удаленное описание (offer)
-      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      addDebugInfo('Remote description установлен при переподключении');
+      // Проверяем, что peerRef.current существует
+      if (!peerRef.current) {
+        addDebugInfo('Ошибка: peerRef.current отсутствует при установке remoteDescription');
+        throw new Error('Соединение не инициализировано');
+      }
       
-      // Создаем ответ
-      const answer = await peerRef.current.createAnswer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true
-      });
-      
-      // Устанавливаем локальное описание (answer)
-      await peerRef.current.setLocalDescription(answer);
-      addDebugInfo('Local description установлен при переподключении');
-      
-      // Отправляем ответ клиенту
-      socketRef.current.emit('sos-answer', { answer, id });
-      addDebugInfo('Answer отправлен клиенту при переподключении');
-      
-      setConnectionStatus('Ожидание соединения после переподключения...');
+      try {
+        // Устанавливаем удаленное описание (offer)
+        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+        addDebugInfo('Remote description установлен при переподключении');
+        
+        // Создаем ответ
+        const answer = await peerRef.current.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
+        
+        // Устанавливаем локальное описание (answer)
+        await peerRef.current.setLocalDescription(answer);
+        addDebugInfo('Local description установлен при переподключении');
+        
+        // Проверяем, что socketRef.current существует
+        if (!socketRef.current) {
+          addDebugInfo('Ошибка: socketRef.current отсутствует при отправке ответа');
+          throw new Error('Соединение с сокетом не инициализировано');
+        }
+        
+        // Отправляем ответ клиенту
+        socketRef.current.emit('sos-answer', { answer, id });
+        addDebugInfo('Answer отправлен клиенту при переподключении');
+        
+        setConnectionStatus('Ожидание соединения после переподключения...');
+      } catch (err) {
+        addDebugInfo(`Ошибка при установке WebRTC соединения: ${err.message}`);
+        throw err;
+      }
     } catch (err) {
       addDebugInfo(`Ошибка при обработке запроса на переподключение: ${err.message}`);
       setError('Не удалось переподключиться: ' + err.message);
+    }
+  };
+
+  // Диагностика WebRTC
+  const handleDiagnoseWebRTC = () => {
+    try {
+      addDebugInfo('Запуск диагностики WebRTC...');
+      
+      // Проверка поддержки WebRTC
+      const support = checkWebRTCSupport();
+      addDebugInfo(`Поддержка WebRTC: ${support.supported ? 'Да' : 'Нет'}`);
+      addDebugInfo(`- MediaDevices API: ${support.mediaDevices ? 'Да' : 'Нет'}`);
+      addDebugInfo(`- PeerConnection API: ${support.peerConnection ? 'Да' : 'Нет'}`);
+      addDebugInfo(`- getUserMedia API: ${support.getUserMedia ? 'Да' : 'Нет'}`);
+      addDebugInfo(`- MediaRecorder API: ${support.mediaRecorder ? 'Да' : 'Нет'}`);
+      addDebugInfo(`- Браузер: ${support.details.browser}`);
+      
+      if (!support.supported) {
+        setError('Ваш браузер не поддерживает WebRTC. Попробуйте использовать Chrome или Firefox.');
+        return;
+      }
+      
+      // Проверка текущего соединения
+      if (peerRef.current) {
+        const debugInfo = getWebRTCDebugInfo(peerRef.current);
+        addDebugInfo('Состояние WebRTC соединения:');
+        addDebugInfo(`- ICE состояние: ${debugInfo.iceConnectionState}`);
+        addDebugInfo(`- ICE сбор: ${debugInfo.iceGatheringState}`);
+        addDebugInfo(`- Сигнальное состояние: ${debugInfo.signalingState}`);
+        addDebugInfo(`- Состояние соединения: ${debugInfo.connectionState}`);
+        
+        // Попытка исправить распространенные проблемы
+        const fixResult = fixCommonWebRTCIssues(peerRef.current);
+        if (fixResult.fixed) {
+          addDebugInfo('Выполнены действия для исправления проблем:');
+          fixResult.actions.forEach(action => addDebugInfo(`- ${action}`));
+        } else if (fixResult.actions.length > 0) {
+          addDebugInfo('Не удалось исправить проблемы:');
+          fixResult.actions.forEach(action => addDebugInfo(`- ${action}`));
+        }
+      } else {
+        addDebugInfo('WebRTC соединение не инициализировано');
+      }
+      
+      // Проверка сетевого соединения
+      addDebugInfo('Проверка сетевого соединения...');
+      addDebugInfo(`Онлайн статус: ${navigator.onLine ? 'Подключен' : 'Отключен'}`);
+      
+      // Рекомендации
+      addDebugInfo('Рекомендации:');
+      addDebugInfo('1. Убедитесь, что вы используете современный браузер (Chrome, Firefox)');
+      addDebugInfo('2. Проверьте доступ к камере и микрофону в настройках браузера');
+      addDebugInfo('3. Проверьте сетевое соединение и брандмауэр');
+      addDebugInfo('4. Попробуйте перезагрузить страницу');
+      
+      setShowFullDebug(true);
+    } catch (err) {
+      addDebugInfo(`Ошибка при диагностике: ${err.message}`);
+    }
+  };
+
+  // Проверка сетевого соединения для WebRTC
+  const handleCheckNetwork = async () => {
+    try {
+      addDebugInfo('Запуск проверки сетевого соединения...');
+      
+      // Проверка базового онлайн-статуса
+      addDebugInfo(`Онлайн статус: ${navigator.onLine ? 'Подключен' : 'Отключен'}`);
+      
+      // Проверка доступности STUN/TURN серверов
+      addDebugInfo('Проверка доступности STUN серверов...');
+      const networkCheck = await checkNetworkForWebRTC();
+      
+      addDebugInfo(`STUN сервер доступен: ${networkCheck.stunReachable ? 'Да' : 'Нет'}`);
+      
+      if (!networkCheck.stunReachable) {
+        addDebugInfo('Внимание: STUN сервер недоступен. Это может препятствовать установлению P2P соединения.');
+        addDebugInfo('Возможные причины:');
+        addDebugInfo('- Блокировка на уровне брандмауэра');
+        addDebugInfo('- Проблемы с сетевым соединением');
+        addDebugInfo('- Ограничения корпоративной сети');
+      }
+      
+      // Проверка WebSocket соединения
+      if (socketRef.current) {
+        addDebugInfo(`Socket.IO соединение: ${socketRef.current.connected ? 'Подключено' : 'Отключено'}`);
+        
+        if (!socketRef.current.connected) {
+          addDebugInfo('Попытка переподключения Socket.IO...');
+          socketRef.current.connect();
+          
+          // Ждем 2 секунды и проверяем статус
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          addDebugInfo(`Socket.IO статус после попытки: ${socketRef.current.connected ? 'Подключено' : 'Отключено'}`);
+        }
+      } else {
+        addDebugInfo('Socket.IO соединение не инициализировано');
+      }
+      
+      // Проверка доступности сервера
+      try {
+        addDebugInfo('Проверка доступности сервера...');
+        const response = await axios.get('/api/status', {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 5000
+        });
+        addDebugInfo(`Сервер доступен, статус: ${response.status}`);
+      } catch (err) {
+        addDebugInfo(`Ошибка при проверке доступности сервера: ${err.message}`);
+      }
+      
+      // Рекомендации
+      addDebugInfo('Рекомендации по сети:');
+      addDebugInfo('1. Убедитесь, что ваш брандмауэр не блокирует WebRTC трафик (порты UDP)');
+      addDebugInfo('2. Проверьте стабильность интернет-соединения');
+      addDebugInfo('3. Если вы используете VPN, попробуйте отключить его');
+      addDebugInfo('4. Если вы в корпоративной сети, свяжитесь с администратором');
+      
+      setShowFullDebug(true);
+    } catch (err) {
+      addDebugInfo(`Ошибка при проверке сети: ${err.message}`);
     }
   };
 
@@ -1260,54 +1471,75 @@ const CallDetails = () => {
                 </button>
               </div>
               
-              {/* Добавляем кнопку для принудительного обновления соединения */}
-              <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button 
-                  onClick={() => {
-                    addDebugInfo('Принудительное обновление соединения...');
-                    
-                    // Закрываем текущее соединение
-                    if (peerRef.current) {
-                      peerRef.current.close();
-                      peerRef.current = null;
-                      addDebugInfo('Текущее соединение закрыто');
-                    }
-                    
-                    // Очищаем видеоэлемент
-                    if (videoRef.current && videoRef.current.srcObject) {
-                      const tracks = videoRef.current.srcObject.getTracks();
-                      tracks.forEach(track => track.stop());
-                      videoRef.current.srcObject = null;
-                      addDebugInfo('Видеоэлемент очищен');
-                    }
-                    
-                    // Полностью перезагружаем данные вызова и переподключаемся
-                    axios.get(`/api/calls/${id}`, {
-                      headers: { Authorization: `Bearer ${token}` }
-                    }).then(response => {
-                      setCall(response.data);
-                      addDebugInfo('Данные вызова обновлены');
-                      
-                      // Инициируем переподключение через небольшую задержку
-                      setTimeout(() => {
-                        handleReconnect();
-                      }, 500);
-                    }).catch(err => {
-                      addDebugInfo(`Ошибка при обновлении данных: ${err.message}`);
-                    });
-                  }}
+                  onClick={handleReconnect}
                   style={{ 
-                    padding: '0.75rem 1.5rem', 
-                    backgroundColor: '#ffc107', 
-                    color: '#212529', 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#007bff', 
+                    color: 'white', 
                     border: 'none',
                     borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    fontWeight: 'bold',
-                    width: '100%'
+                    cursor: 'pointer'
                   }}
                 >
-                  Принудительно обновить соединение
+                  Принудительное обновление соединения
+                </button>
+                
+                <button 
+                  onClick={handleDiagnoseWebRTC}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#28a745', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Диагностика WebRTC
+                </button>
+                
+                <button 
+                  onClick={handleCheckNetwork}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#fd7e14', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Проверка сети
+                </button>
+                
+                <button 
+                  onClick={clearDebugInfo}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#6c757d', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Очистить логи
+                </button>
+                
+                <button 
+                  onClick={toggleDebugModal}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#17a2b8', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {showFullDebug ? 'Скрыть отладочную информацию' : 'Показать отладочную информацию'}
                 </button>
               </div>
               

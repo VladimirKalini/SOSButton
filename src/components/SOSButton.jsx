@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
+import { diagnoseWebRTCError } from '../scripts/webrtcErrorHandler';
 
 export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }) {
   const socketRef = useRef(null);
@@ -21,10 +22,18 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const maxReconnectAttempts = 3;
   const [signalingState, setSignalingState] = useState('stable');
 
-  // Функция для логирования
-  const addDebugMessage = (message) => {
+  // Функция для логирования с улучшенной диагностикой ошибок
+  const addDebugMessage = (message, error = null) => {
     console.log(message);
-    setDebugMessage(message);
+    
+    // Если передана ошибка, используем диагностику
+    if (error) {
+      const diagnosis = diagnoseWebRTCError(error);
+      setDebugMessage(`${message}: ${diagnosis}`);
+      console.log(`Диагностика ошибки: ${diagnosis}`);
+    } else {
+      setDebugMessage(message);
+    }
   };
 
   useEffect(() => {
@@ -92,7 +101,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           }
         } catch (error) {
           console.error('Ошибка при установке remoteDescription:', error);
-          addDebugMessage(`Ошибка при установке соединения: ${error.message}`);
+          addDebugMessage('Ошибка при установке соединения', error);
           
           // Пробуем переподключиться при ошибке
           setTimeout(() => {
@@ -101,7 +110,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         }
       } catch (e) {
         console.error('Ошибка при установке ответа:', e);
-        addDebugMessage(`Ошибка: ${e.message}`);
+        addDebugMessage('Ошибка при обработке ответа', e);
         
         // Если произошла ошибка, пробуем переинициализировать соединение
         setTimeout(() => {
@@ -390,6 +399,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       return offer;
     } catch (err) {
       console.error('Ошибка при инициализации WebRTC:', err);
+      addDebugMessage('Ошибка при инициализации WebRTC', err);
       throw err;
     }
   };
