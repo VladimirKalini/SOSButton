@@ -104,331 +104,62 @@ const CallDetails = () => {
     setHasVideo(false);
     setHasAudio(false);
 
-    // Инициализация WebRTC
+    // Инициализация WebRTC с более надежной конфигурацией
     peerRef.current = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
+        { 
+          urls: 'turn:numb.viagenie.ca',
+          username: 'webrtc@live.com',
+          credential: 'muazkh'
+        },
+        {
+          urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+          username: 'webrtc',
+          credential: 'webrtc'
+        }
       ],
-      iceTransportPolicy: 'all',
-      iceCandidatePoolSize: 10
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+      iceTransportPolicy: 'all'
     });
 
-    peerRef.current.ontrack = (event) => {
-      // Проверяем, не обрабатывали ли мы уже этот трек
-      const trackId = event.track.id;
-      if (processedTracksRef.current.has(trackId)) {
-        // Трек уже был обработан, пропускаем
-        addDebugInfo(`Пропускаем уже обработанный трек: ${event.track.kind}, id: ${trackId}`);
-        return;
-      }
-      
-      // Добавляем трек в список обработанных
-      processedTracksRef.current.add(trackId);
-      
-      addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
-      
-      if (event.track.kind === 'video') {
-        setHasVideo(true);
-        addDebugInfo('Видеотрек получен');
-      } else if (event.track.kind === 'audio') {
-        setHasAudio(true);
-        addDebugInfo('Аудиотрек получен');
-      }
-      
-      // Получаем медиапоток
-      const stream = event.streams[0];
-      
-      if (!stream) {
-        addDebugInfo('Ошибка: поток отсутствует в событии track');
-        return;
-      }
-      
-      if (videoRef.current) {
-        // Устанавливаем поток в видеоэлемент
-        if (!videoRef.current.srcObject) {
-          videoRef.current.srcObject = stream;
-          addDebugInfo('Установлен новый видеопоток');
-        } else {
-          // Если поток уже есть, проверяем, тот же ли это поток
-          const currentStream = videoRef.current.srcObject;
-          if (currentStream.id !== stream.id) {
-            // Если это новый поток, заменяем существующий
-            videoRef.current.srcObject = stream;
-            addDebugInfo('Заменен существующий видеопоток');
-          } else {
-            addDebugInfo('Поток уже установлен, пропускаем');
-          }
-        }
-        
-        // Настраиваем обработчики для видеоэлемента
-        videoRef.current.onloadedmetadata = () => {
-          addDebugInfo('Метаданные видео загружены');
-          
-          // Запускаем воспроизведение
-          try {
-            videoRef.current.play()
-              .then(() => {
-                addDebugInfo('Воспроизведение видео успешно запущено');
-                setAutoplayBlocked(false);
-              })
-              .catch(err => {
-                addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
-                
-                // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
-                if (err.name === 'NotAllowedError') {
-                  addDebugInfo('Автовоспроизведение заблокировано браузером');
-                  setAutoplayBlocked(true);
-                }
-              });
-          } catch (err) {
-            addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
-          }
-        };
-        
-        // Обработка ошибок
-        videoRef.current.onerror = (e) => {
-          addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
-        };
-      } else {
-        addDebugInfo('Ошибка: videoRef.current отсутствует');
-      }
-      
-      // Отслеживаем окончание трека
-      event.track.onended = () => {
-        addDebugInfo(`Трек ${event.track.kind} завершен`);
-        // Удаляем трек из списка обработанных
-        processedTracksRef.current.delete(trackId);
-        
-        // Проверяем, остались ли еще треки
-        if (event.track.kind === 'video') {
-          setHasVideo(false);
-        } else if (event.track.kind === 'audio') {
-          setHasAudio(false);
-        }
-      };
-    };
+    // Настройка обработчиков для peer connection
+    setupPeerHandlers();
 
-    peerRef.current.oniceconnectionstatechange = () => {
-      const state = peerRef.current.iceConnectionState;
-      addDebugInfo(`ICE состояние изменилось: ${state}`);
-      setConnectionStatus(`ICE состояние: ${state}`);
-      
-      if (state === 'connected' || state === 'completed') {
-        setConnectionStatus('Соединение установлено');
-      } else if (state === 'failed' || state === 'disconnected') {
-        setError('Соединение потеряно. Пытаемся восстановить...');
-        // Пробуем переподключиться
-        setTimeout(() => {
-          if (peerRef.current) {
-            peerRef.current.restartIce();
-            addDebugInfo('Попытка восстановления ICE соединения');
-          }
-        }, 1000);
-      }
-    };
-
-    peerRef.current.onsignalingstatechange = () => {
-      addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
-    };
-
-    peerRef.current.onconnectionstatechange = () => {
-      addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
-    };
-
-    // Подключение к Socket.IO
+    // Подключение к Socket.IO с более надежными параметрами
     socketRef.current = io(serverUrl, {
       auth: { token },
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-      timeout: 20000
+      timeout: 30000,
+      forceNew: true
     });
 
+    // Настройка обработчиков для socket
     socketRef.current.on('connect', () => {
-      addDebugInfo(`Socket.IO подключен, присоединяемся к комнате: ${id}`);
+      addDebugInfo(`Socket.IO подключен (id: ${socketRef.current.id}), присоединяемся к комнате: ${id}`);
       socketRef.current.emit('join-room', id);
-    });
-
-    socketRef.current.on('connect_error', (err) => {
-      addDebugInfo(`Ошибка подключения Socket.IO: ${err.message}`);
-      setError('Не удалось подключиться к серверу');
-    });
-
-    socketRef.current.on('ice-candidate', async (candidate) => {
-      try {
-        addDebugInfo('Получен ICE кандидат от клиента');
-        if (peerRef.current && peerRef.current.remoteDescription) {
-          await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-          addDebugInfo('ICE кандидат успешно добавлен');
+      
+      // Отправляем ping каждые 15 секунд для поддержания соединения
+      const pingInterval = setInterval(() => {
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('ping');
+          addDebugInfo('Ping отправлен');
         } else {
-          addDebugInfo('Не удалось добавить ICE кандидата: нет remoteDescription');
-          // Сохраняем кандидата для последующего добавления
-          const pendingCandidates = pendingIceCandidatesRef.current || [];
-          pendingIceCandidatesRef.current = [...pendingCandidates, candidate];
-          addDebugInfo(`ICE кандидат сохранен (всего: ${pendingIceCandidatesRef.current.length})`);
+          clearInterval(pingInterval);
         }
-      } catch (err) {
-        addDebugInfo(`Ошибка при добавлении ICE кандидата: ${err.message}`);
-      }
+      }, 15000);
+      
+      // Очистка интервала при размонтировании
+      return () => clearInterval(pingInterval);
     });
 
-    socketRef.current.on('sos-canceled', () => {
-      setError('SOS вызов был отменен');
-      setTimeout(() => navigate('/'), 3000);
-    });
-
-    // Обработка переподключения клиента
-    socketRef.current.on('sos-reconnect', async ({ offer, id: reconnectId }) => {
-      addDebugInfo(`Получен запрос на переподключение от клиента: ${reconnectId}`);
-      if (reconnectId === id) {
-        try {
-          // Закрываем текущее соединение
-          if (peerRef.current) {
-            peerRef.current.close();
-          }
-          
-          // Очищаем список обработанных треков
-          processedTracksRef.current.clear();
-          
-          // Создаем новое соединение
-          peerRef.current = new RTCPeerConnection({
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' },
-              { urls: 'stun:stun3.l.google.com:19302' },
-              { urls: 'stun:stun4.l.google.com:19302' }
-            ],
-            iceTransportPolicy: 'all',
-            iceCandidatePoolSize: 10
-          });
-          
-          // Настраиваем обработчики событий
-          peerRef.current.ontrack = (event) => {
-            // Проверяем, не обрабатывали ли мы уже этот трек
-            const trackId = event.track.id;
-            if (processedTracksRef.current.has(trackId)) {
-              // Трек уже был обработан, пропускаем
-              return;
-            }
-            
-            // Добавляем трек в список обработанных
-            processedTracksRef.current.add(trackId);
-            
-            addDebugInfo(`Получен медиа-трек после переподключения: ${event.track.kind}, id: ${trackId}`);
-            
-            if (event.track.kind === 'video') {
-              setHasVideo(true);
-            } else if (event.track.kind === 'audio') {
-              setHasAudio(true);
-            }
-            
-            if (videoRef.current) {
-              // Проверяем, есть ли уже видеопоток
-              const currentStream = videoRef.current.srcObject;
-              
-              // Если поток уже установлен, добавляем трек к существующему потоку
-              if (currentStream) {
-                addDebugInfo('Добавление трека к существующему потоку после переподключения');
-                // Не заменяем поток, если он уже есть
-              } else {
-                // Устанавливаем новый поток
-                videoRef.current.srcObject = event.streams[0];
-                addDebugInfo('Установлен новый видеопоток после переподключения');
-                
-                // Настраиваем обработчики для видеоэлемента
-                videoRef.current.onloadedmetadata = () => {
-                  addDebugInfo('Метаданные видео загружены после переподключения');
-                  
-                  // Используем Promise для обработки воспроизведения
-                  const playPromise = videoRef.current.play();
-                  
-                  if (playPromise !== undefined) {
-                    playPromise
-                      .then(() => {
-                        addDebugInfo('Воспроизведение видео успешно запущено после переподключения');
-                        setAutoplayBlocked(false);
-                      })
-                      .catch(err => {
-                        addDebugInfo(`Ошибка воспроизведения после переподключения: ${err.message}`);
-                        
-                        // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
-                        if (err.name === 'NotAllowedError') {
-                          addDebugInfo('Автовоспроизведение заблокировано браузером после переподключения');
-                          setAutoplayBlocked(true);
-                        }
-                      });
-                  }
-                };
-              }
-            }
-            
-            // Отслеживаем окончание трека
-            event.track.onended = () => {
-              addDebugInfo(`Трек ${event.track.kind} завершен после переподключения`);
-              // Удаляем трек из списка обработанных
-              processedTracksRef.current.delete(trackId);
-            };
-          };
-          
-          peerRef.current.oniceconnectionstatechange = () => {
-            const state = peerRef.current.iceConnectionState;
-            addDebugInfo(`ICE состояние изменилось: ${state}`);
-            setConnectionStatus(`ICE состояние: ${state}`);
-          };
-          
-          peerRef.current.onsignalingstatechange = () => {
-            addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
-          };
-          
-          peerRef.current.onicecandidate = ({ candidate }) => {
-            if (candidate) {
-              addDebugInfo('Отправка ICE кандидата клиенту');
-              socketRef.current.emit('ice-candidate', { candidate, id });
-            }
-          };
-          
-          // Устанавливаем удаленное описание
-          await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-          addDebugInfo('Remote description установлен');
-          
-          // Добавляем сохраненные ICE кандидаты, если они есть
-          if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
-            addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
-            for (const candidate of pendingIceCandidatesRef.current) {
-              try {
-                await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-                addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
-              } catch (err) {
-                addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
-              }
-            }
-            pendingIceCandidatesRef.current = [];
-          }
-          
-          // Создаем ответ
-          const answer = await peerRef.current.createAnswer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: true
-          });
-          await peerRef.current.setLocalDescription(answer);
-          addDebugInfo('Local description (answer) установлен');
-          
-          // Отправляем ответ клиенту
-          socketRef.current.emit('sos-answer', { answer, id });
-          addDebugInfo('Answer отправлен клиенту после переподключения');
-          
-          setConnectionStatus('Ожидание соединения после переподключения...');
-        } catch (err) {
-          addDebugInfo(`Ошибка при переподключении: ${err.message}`);
-          setError('Не удалось переподключиться: ' + err.message);
-        }
-      }
-    });
+    // Настройка обработчиков сокета
+    setupSocketHandlers();
 
     // Создание ответа на offer
     const handleOffer = async () => {
@@ -441,133 +172,6 @@ const CallDetails = () => {
           return;
         }
         
-        // Очищаем предыдущее соединение, если оно есть
-        if (peerRef.current) {
-          peerRef.current.close();
-          peerRef.current = null;
-        }
-        
-        // Очищаем список обработанных треков
-        processedTracksRef.current.clear();
-        
-        // Создаем новое соединение
-        peerRef.current = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' }
-          ],
-          iceTransportPolicy: 'all',
-          iceCandidatePoolSize: 10
-        });
-        
-        // Настраиваем обработчик для медиа-треков
-        peerRef.current.ontrack = (event) => {
-          // Проверяем, не обрабатывали ли мы уже этот трек
-          const trackId = event.track.id;
-          if (processedTracksRef.current.has(trackId)) {
-            // Трек уже был обработан, пропускаем
-            return;
-          }
-          
-          // Добавляем трек в список обработанных
-          processedTracksRef.current.add(trackId);
-          
-          addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
-          
-          if (event.track.kind === 'video') {
-            setHasVideo(true);
-          } else if (event.track.kind === 'audio') {
-            setHasAudio(true);
-          }
-          
-          // Получаем медиапоток
-          const stream = event.streams[0];
-          
-          if (videoRef.current) {
-            // Устанавливаем поток в видеоэлемент
-            videoRef.current.srcObject = stream;
-            addDebugInfo('Видеопоток установлен в элемент video');
-            
-            // Настраиваем обработчики для видеоэлемента
-            videoRef.current.onloadedmetadata = () => {
-              addDebugInfo('Метаданные видео загружены');
-              
-              // Запускаем воспроизведение
-              try {
-                videoRef.current.play()
-                  .then(() => {
-                    addDebugInfo('Воспроизведение видео успешно запущено');
-                    setAutoplayBlocked(false);
-                  })
-                  .catch(err => {
-                    addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
-                    
-                    // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
-                    if (err.name === 'NotAllowedError') {
-                      addDebugInfo('Автовоспроизведение заблокировано браузером');
-                      setAutoplayBlocked(true);
-                    }
-                  });
-              } catch (err) {
-                addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
-              }
-            };
-            
-            // Обработка ошибок
-            videoRef.current.onerror = (e) => {
-              addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
-            };
-          } else {
-            addDebugInfo('Ошибка: videoRef.current отсутствует');
-          }
-          
-          // Отслеживаем окончание трека
-          event.track.onended = () => {
-            addDebugInfo(`Трек ${event.track.kind} завершен`);
-            // Удаляем трек из списка обработанных
-            processedTracksRef.current.delete(trackId);
-          };
-        };
-        
-        // Настраиваем обработчики событий
-        peerRef.current.oniceconnectionstatechange = () => {
-          const state = peerRef.current.iceConnectionState;
-          addDebugInfo(`ICE состояние изменилось: ${state}`);
-          setConnectionStatus(`ICE состояние: ${state}`);
-          
-          if (state === 'connected' || state === 'completed') {
-            setConnectionStatus('Соединение установлено');
-          } else if (state === 'failed' || state === 'disconnected') {
-            setError('Соединение потеряно. Пытаемся восстановить...');
-            // Пробуем переподключиться
-            setTimeout(() => {
-              if (peerRef.current) {
-                peerRef.current.restartIce();
-                addDebugInfo('Попытка восстановления ICE соединения');
-              }
-            }, 1000);
-          }
-        };
-        
-        peerRef.current.onsignalingstatechange = () => {
-          addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
-        };
-        
-        peerRef.current.onconnectionstatechange = () => {
-          addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
-        };
-        
-        // Обработчик ICE кандидатов
-        peerRef.current.onicecandidate = ({ candidate }) => {
-          if (candidate) {
-            addDebugInfo('Отправка ICE кандидата клиенту');
-            socketRef.current.emit('ice-candidate', { candidate, id });
-          }
-        };
-
         // Устанавливаем удаленное описание (offer)
         await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
         addDebugInfo('Remote description установлен');
@@ -614,14 +218,6 @@ const CallDetails = () => {
             }
           }
         }, 15000);
-        
-        // Устанавливаем таймаут для проверки соединения
-        setTimeout(() => {
-          if (!hasVideo && !hasAudio && peerRef.current) {
-            addDebugInfo('Таймаут: нет медиа-треков. Пробуем переподключиться...');
-            handleReconnect(); // Пробуем переподключиться
-          }
-        }, 10000);
       } catch (err) {
         addDebugInfo(`Ошибка при установке WebRTC соединения: ${err.message}`);
         setError('Не удалось установить видеосвязь: ' + err.message);
@@ -640,20 +236,40 @@ const CallDetails = () => {
       setError('Отсутствует offer для установки соединения');
     }
 
-    // Обработка пинга для поддержания соединения
-    socketRef.current.on('ping', () => {
-      socketRef.current.emit('pong');
-    });
-
     return () => {
+      // Корректное закрытие соединений при размонтировании
       if (peerRef.current) {
+        peerRef.current.ontrack = null;
+        peerRef.current.onicecandidate = null;
+        peerRef.current.oniceconnectionstatechange = null;
+        peerRef.current.onsignalingstatechange = null;
+        peerRef.current.onconnectionstatechange = null;
         peerRef.current.close();
+        peerRef.current = null;
       }
+      
       if (socketRef.current) {
+        socketRef.current.off('connect');
+        socketRef.current.off('ice-candidate');
+        socketRef.current.off('sos-canceled');
+        socketRef.current.off('sos-reconnect');
+        socketRef.current.off('ping');
         socketRef.current.disconnect();
+        socketRef.current = null;
       }
+      
+      // Очищаем видеоэлемент
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
+      
+      // Очищаем списки
+      processedTracksRef.current.clear();
+      pendingIceCandidatesRef.current = [];
     };
-  }, [call, id, token, navigate, serverUrl, viewMode, hasVideo, hasAudio]);
+  }, [call, id, token, navigate, serverUrl, viewMode]);
 
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
@@ -799,26 +415,57 @@ const CallDetails = () => {
       return;
     }
     
-    // Очищаем список обработанных треков
+    // Очищаем список обработанных треков и кандидатов
     processedTracksRef.current.clear();
     pendingIceCandidatesRef.current = [];
     addDebugInfo('Список обработанных треков и кандидатов ICE очищен');
     
     // Закрываем текущее соединение
     if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
+      try {
+        peerRef.current.ontrack = null;
+        peerRef.current.onicecandidate = null;
+        peerRef.current.oniceconnectionstatechange = null;
+        peerRef.current.onsignalingstatechange = null;
+        peerRef.current.onconnectionstatechange = null;
+        peerRef.current.close();
+        peerRef.current = null;
+        addDebugInfo('Текущее WebRTC соединение закрыто');
+      } catch (err) {
+        addDebugInfo(`Ошибка при закрытии WebRTC соединения: ${err.message}`);
+      }
     }
     
     // Очищаем видеоэлемент
     if (videoRef.current) {
       if (videoRef.current.srcObject) {
-        const tracks = videoRef.current.srcObject.getTracks();
-        tracks.forEach(track => {
-          track.stop();
-          addDebugInfo(`Трек ${track.kind} остановлен`);
-        });
-        videoRef.current.srcObject = null;
+        try {
+          const tracks = videoRef.current.srcObject.getTracks();
+          tracks.forEach(track => {
+            track.stop();
+            addDebugInfo(`Трек ${track.kind} остановлен`);
+          });
+          videoRef.current.srcObject = null;
+          addDebugInfo('Видеоэлемент очищен');
+        } catch (err) {
+          addDebugInfo(`Ошибка при очистке видеоэлемента: ${err.message}`);
+        }
+      }
+    }
+    
+    // Закрываем текущее соединение с сокетом
+    if (socketRef.current) {
+      try {
+        socketRef.current.off('connect');
+        socketRef.current.off('ice-candidate');
+        socketRef.current.off('sos-canceled');
+        socketRef.current.off('sos-reconnect');
+        socketRef.current.off('ping');
+        socketRef.current.disconnect();
+        socketRef.current = null;
+        addDebugInfo('Socket.IO соединение закрыто');
+      } catch (err) {
+        addDebugInfo(`Ошибка при закрытии Socket.IO соединения: ${err.message}`);
       }
     }
     
@@ -830,6 +477,7 @@ const CallDetails = () => {
     
     // Очищаем логи
     setDebugInfo('Логи очищены при переподключении');
+    addDebugInfo('Начало процесса переподключения');
     
     // Перезагружаем данные вызова с сервера
     axios.get(`/api/calls/${id}`, {
@@ -837,44 +485,267 @@ const CallDetails = () => {
     }).then(response => {
       addDebugInfo('Данные вызова успешно обновлены');
       
-      // Принудительно пересоздаем соединение с сокетом
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-      
+      // Создаем новое соединение с сокетом
       socketRef.current = io(serverUrl, {
         auth: { token },
         transports: ['websocket', 'polling'],
-        reconnectionAttempts: 5,
+        reconnectionAttempts: 10,
         reconnectionDelay: 1000,
-        timeout: 20000
+        timeout: 30000,
+        forceNew: true
       });
       
+      // Настраиваем обработчики для сокета
       socketRef.current.on('connect', () => {
-        addDebugInfo('Socket.IO переподключен');
+        addDebugInfo(`Socket.IO переподключен (id: ${socketRef.current.id})`);
         socketRef.current.emit('join-room', id);
+        
+        // Создаем новое WebRTC соединение
+        peerRef.current = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { 
+              urls: 'turn:numb.viagenie.ca',
+              username: 'webrtc@live.com',
+              credential: 'muazkh'
+            },
+            {
+              urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+              username: 'webrtc',
+              credential: 'webrtc'
+            }
+          ],
+          iceCandidatePoolSize: 10,
+          bundlePolicy: 'max-bundle',
+          rtcpMuxPolicy: 'require',
+          iceTransportPolicy: 'all'
+        });
+        
+        // Настраиваем обработчики для WebRTC
+        setupPeerHandlers();
+        
+        // Настраиваем обработчики для сокета
+        setupSocketHandlers();
+        
+        // Обрабатываем offer, если он есть
+        if (response.data.offer) {
+          try {
+            // Устанавливаем удаленное описание (offer)
+            peerRef.current.setRemoteDescription(new RTCSessionDescription(response.data.offer))
+              .then(() => {
+                addDebugInfo('Remote description установлен при переподключении');
+                
+                // Создаем ответ
+                return peerRef.current.createAnswer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: true
+                });
+              })
+              .then(answer => {
+                // Устанавливаем локальное описание (answer)
+                return peerRef.current.setLocalDescription(answer)
+                  .then(() => answer);
+              })
+              .then(answer => {
+                addDebugInfo('Local description (answer) установлен при переподключении');
+                
+                // Отправляем ответ клиенту
+                socketRef.current.emit('sos-answer', { answer, id });
+                addDebugInfo('Answer отправлен клиенту при переподключении');
+                
+                setConnectionStatus('Ожидание соединения после переподключения...');
+              })
+              .catch(err => {
+                addDebugInfo(`Ошибка при установке WebRTC соединения при переподключении: ${err.message}`);
+                setError('Не удалось установить видеосвязь: ' + err.message);
+              });
+          } catch (err) {
+            addDebugInfo(`Ошибка при обработке offer при переподключении: ${err.message}`);
+            setError('Не удалось установить видеосвязь: ' + err.message);
+          }
+        } else {
+          addDebugInfo('Отсутствует offer для установки соединения при переподключении');
+          setError('Отсутствует offer для установки соединения');
+        }
       });
       
       socketRef.current.on('connect_error', (err) => {
         addDebugInfo(`Ошибка переподключения Socket.IO: ${err.message}`);
-        setError('Не удалось переподключиться к серверу');
+        setError('Не удалось переподключиться к серверу: ' + err.message);
       });
-      
-      // Устанавливаем обработчики событий заново
-      setupSocketHandlers();
       
       // Обновляем данные вызова
       setCall(response.data);
     }).catch(err => {
       addDebugInfo(`Ошибка при обновлении данных вызова: ${err.message}`);
-      // Даже если не удалось обновить данные, пробуем переподключиться с текущими данными
-      setCall(prev => ({...prev}));
+      setError('Не удалось обновить данные вызова: ' + err.message);
     });
+  };
+
+  // Настройка обработчиков для peer connection
+  const setupPeerHandlers = () => {
+    if (!peerRef.current) return;
+    
+    peerRef.current.ontrack = (event) => {
+      try {
+        // Проверяем, не обрабатывали ли мы уже этот трек
+        const trackId = event.track.id;
+        if (processedTracksRef.current.has(trackId)) {
+          // Трек уже был обработан, пропускаем
+          addDebugInfo(`Пропускаем уже обработанный трек: ${event.track.kind}, id: ${trackId}`);
+          return;
+        }
+        
+        // Добавляем трек в список обработанных
+        processedTracksRef.current.add(trackId);
+        
+        addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
+        
+        if (event.track.kind === 'video') {
+          setHasVideo(true);
+          addDebugInfo('Видеотрек получен');
+        } else if (event.track.kind === 'audio') {
+          setHasAudio(true);
+          addDebugInfo('Аудиотрек получен');
+        }
+        
+        // Получаем медиапоток
+        const stream = event.streams[0];
+        
+        if (!stream) {
+          addDebugInfo('Ошибка: поток отсутствует в событии track');
+          return;
+        }
+        
+        if (videoRef.current) {
+          try {
+            // Устанавливаем поток в видеоэлемент
+            if (!videoRef.current.srcObject) {
+              videoRef.current.srcObject = stream;
+              addDebugInfo('Установлен новый видеопоток');
+            } else {
+              // Если поток уже есть, проверяем, тот же ли это поток
+              const currentStream = videoRef.current.srcObject;
+              if (currentStream.id !== stream.id) {
+                // Если это новый поток, заменяем существующий
+                videoRef.current.srcObject = stream;
+                addDebugInfo('Заменен существующий видеопоток');
+              } else {
+                addDebugInfo('Поток уже установлен, пропускаем');
+              }
+            }
+            
+            // Настраиваем обработчики для видеоэлемента
+            videoRef.current.onloadedmetadata = () => {
+              addDebugInfo('Метаданные видео загружены');
+              
+              // Запускаем воспроизведение
+              try {
+                videoRef.current.play()
+                  .then(() => {
+                    addDebugInfo('Воспроизведение видео успешно запущено');
+                    setAutoplayBlocked(false);
+                  })
+                  .catch(err => {
+                    addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
+                    
+                    // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
+                    if (err.name === 'NotAllowedError') {
+                      addDebugInfo('Автовоспроизведение заблокировано браузером');
+                      setAutoplayBlocked(true);
+                    }
+                  });
+              } catch (err) {
+                addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
+              }
+            };
+            
+            // Обработка ошибок
+            videoRef.current.onerror = (e) => {
+              addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
+            };
+          } catch (err) {
+            addDebugInfo(`Ошибка при настройке видеоэлемента: ${err.message}`);
+          }
+        } else {
+          addDebugInfo('Ошибка: videoRef.current отсутствует');
+        }
+        
+        // Отслеживаем окончание трека
+        event.track.onended = () => {
+          addDebugInfo(`Трек ${event.track.kind} завершен`);
+          // Удаляем трек из списка обработанных
+          processedTracksRef.current.delete(trackId);
+          
+          // Проверяем, остались ли еще треки
+          if (event.track.kind === 'video') {
+            setHasVideo(false);
+          } else if (event.track.kind === 'audio') {
+            setHasAudio(false);
+          }
+        };
+      } catch (err) {
+        addDebugInfo(`Ошибка в обработчике ontrack: ${err.message}`);
+      }
+    };
+    
+    peerRef.current.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        addDebugInfo('Отправка ICE кандидата клиенту');
+        socketRef.current.emit('ice-candidate', { candidate, id });
+      }
+    };
+    
+    peerRef.current.oniceconnectionstatechange = () => {
+      try {
+        const state = peerRef.current.iceConnectionState;
+        addDebugInfo(`ICE состояние изменилось: ${state}`);
+        setConnectionStatus(`ICE состояние: ${state}`);
+        
+        if (state === 'connected' || state === 'completed') {
+          setConnectionStatus('Соединение установлено');
+        } else if (state === 'failed' || state === 'disconnected') {
+          setError('Соединение потеряно. Пытаемся восстановить...');
+          // Пробуем переподключиться
+          setTimeout(() => {
+            if (peerRef.current) {
+              peerRef.current.restartIce();
+              addDebugInfo('Попытка восстановления ICE соединения');
+            }
+          }, 1000);
+        }
+      } catch (err) {
+        addDebugInfo(`Ошибка в обработчике oniceconnectionstatechange: ${err.message}`);
+      }
+    };
+    
+    peerRef.current.onsignalingstatechange = () => {
+      addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
+    };
+    
+    peerRef.current.onconnectionstatechange = () => {
+      addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
+      
+      // Если соединение закрыто или не удалось установить, пробуем переподключиться
+      if (peerRef.current.connectionState === 'failed' || 
+          peerRef.current.connectionState === 'closed') {
+        addDebugInfo('Соединение закрыто или не удалось установить. Пробуем переподключиться через 2 секунды...');
+        setTimeout(() => {
+          handleReconnect();
+        }, 2000);
+      }
+    };
   };
 
   // Настройка обработчиков сокета
   const setupSocketHandlers = () => {
     if (!socketRef.current) return;
+    
+    socketRef.current.on('connect_error', (err) => {
+      addDebugInfo(`Ошибка подключения Socket.IO: ${err.message}`);
+      setError('Не удалось подключиться к серверу');
+    });
     
     socketRef.current.on('ice-candidate', async (candidate) => {
       try {
@@ -893,16 +764,17 @@ const CallDetails = () => {
         addDebugInfo(`Ошибка при добавлении ICE кандидата: ${err.message}`);
       }
     });
-
+    
     socketRef.current.on('sos-canceled', () => {
       setError('SOS вызов был отменен');
       setTimeout(() => navigate('/'), 3000);
     });
-
+    
     socketRef.current.on('sos-reconnect', async ({ offer, id: reconnectId }) => {
       addDebugInfo(`Получен запрос на переподключение от клиента: ${reconnectId}`);
       if (reconnectId === id) {
         try {
+          // Обрабатываем запрос на переподключение
           handleReconnectOffer(offer);
         } catch (err) {
           addDebugInfo(`Ошибка при переподключении: ${err.message}`);
@@ -915,204 +787,21 @@ const CallDetails = () => {
     socketRef.current.on('ping', () => {
       socketRef.current.emit('pong');
     });
-  };
-  
-  // Обработка offer при переподключении
-  const handleReconnectOffer = async (offer) => {
-    try {
-      // Закрываем текущее соединение
-      if (peerRef.current) {
-        peerRef.current.close();
-      }
-      
-      // Очищаем список обработанных треков
-      processedTracksRef.current.clear();
-      
-      // Создаем новое соединение
-      peerRef.current = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
-        ],
-        iceTransportPolicy: 'all',
-        iceCandidatePoolSize: 10
-      });
-      
-      // Настраиваем обработчики событий
-      setupPeerHandlers();
-      
-      // Устанавливаем удаленное описание
-      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      addDebugInfo('Remote description установлен');
-      
-      // Добавляем сохраненные ICE кандидаты, если они есть
-      if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
-        addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
-        for (const candidate of pendingIceCandidatesRef.current) {
-          try {
-            await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-            addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
-          } catch (err) {
-            addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
-          }
-        }
-        pendingIceCandidatesRef.current = [];
-      }
-      
-      // Создаем ответ
-      const answer = await peerRef.current.createAnswer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true
-      });
-      await peerRef.current.setLocalDescription(answer);
-      addDebugInfo('Local description (answer) установлен');
-      
-      // Отправляем ответ клиенту
-      socketRef.current.emit('sos-answer', { answer, id });
-      addDebugInfo('Answer отправлен клиенту после переподключения');
-      
-      setConnectionStatus('Ожидание соединения после переподключения...');
-    } catch (err) {
-      addDebugInfo(`Ошибка при переподключении: ${err.message}`);
-      throw err;
-    }
-  };
-  
-  // Настройка обработчиков для peer connection
-  const setupPeerHandlers = () => {
-    if (!peerRef.current) return;
     
-    peerRef.current.ontrack = (event) => {
-      // Проверяем, не обрабатывали ли мы уже этот трек
-      const trackId = event.track.id;
-      if (processedTracksRef.current.has(trackId)) {
-        // Трек уже был обработан, пропускаем
-        addDebugInfo(`Пропускаем уже обработанный трек: ${event.track.kind}, id: ${trackId}`);
-        return;
+    // Обработка отключения сокета
+    socketRef.current.on('disconnect', (reason) => {
+      addDebugInfo(`Socket.IO отключен: ${reason}`);
+      if (reason === 'io server disconnect' || reason === 'transport close') {
+        // Сервер разорвал соединение, пробуем переподключиться
+        addDebugInfo('Пробуем переподключиться к серверу...');
+        socketRef.current.connect();
       }
-      
-      // Добавляем трек в список обработанных
-      processedTracksRef.current.add(trackId);
-      
-      addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
-      
-      if (event.track.kind === 'video') {
-        setHasVideo(true);
-        addDebugInfo('Видеотрек получен');
-      } else if (event.track.kind === 'audio') {
-        setHasAudio(true);
-        addDebugInfo('Аудиотрек получен');
-      }
-      
-      // Получаем медиапоток
-      const stream = event.streams[0];
-      
-      if (!stream) {
-        addDebugInfo('Ошибка: поток отсутствует в событии track');
-        return;
-      }
-      
-      if (videoRef.current) {
-        // Устанавливаем поток в видеоэлемент
-        if (!videoRef.current.srcObject) {
-          videoRef.current.srcObject = stream;
-          addDebugInfo('Установлен новый видеопоток');
-        } else {
-          // Если поток уже есть, проверяем, тот же ли это поток
-          const currentStream = videoRef.current.srcObject;
-          if (currentStream.id !== stream.id) {
-            // Если это новый поток, заменяем существующий
-            videoRef.current.srcObject = stream;
-            addDebugInfo('Заменен существующий видеопоток');
-          } else {
-            addDebugInfo('Поток уже установлен, пропускаем');
-          }
-        }
-        
-        // Настраиваем обработчики для видеоэлемента
-        videoRef.current.onloadedmetadata = () => {
-          addDebugInfo('Метаданные видео загружены');
-          
-          // Запускаем воспроизведение
-          try {
-            videoRef.current.play()
-              .then(() => {
-                addDebugInfo('Воспроизведение видео успешно запущено');
-                setAutoplayBlocked(false);
-              })
-              .catch(err => {
-                addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
-                
-                // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
-                if (err.name === 'NotAllowedError') {
-                  addDebugInfo('Автовоспроизведение заблокировано браузером');
-                  setAutoplayBlocked(true);
-                }
-              });
-          } catch (err) {
-            addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
-          }
-        };
-        
-        // Обработка ошибок
-        videoRef.current.onerror = (e) => {
-          addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
-        };
-      } else {
-        addDebugInfo('Ошибка: videoRef.current отсутствует');
-      }
-      
-      // Отслеживаем окончание трека
-      event.track.onended = () => {
-        addDebugInfo(`Трек ${event.track.kind} завершен`);
-        // Удаляем трек из списка обработанных
-        processedTracksRef.current.delete(trackId);
-        
-        // Проверяем, остались ли еще треки
-        if (event.track.kind === 'video') {
-          setHasVideo(false);
-        } else if (event.track.kind === 'audio') {
-          setHasAudio(false);
-        }
-      };
-    };
+    });
     
-    peerRef.current.oniceconnectionstatechange = () => {
-      const state = peerRef.current.iceConnectionState;
-      addDebugInfo(`ICE состояние изменилось: ${state}`);
-      setConnectionStatus(`ICE состояние: ${state}`);
-      
-      if (state === 'connected' || state === 'completed') {
-        setConnectionStatus('Соединение установлено');
-      } else if (state === 'failed' || state === 'disconnected') {
-        setError('Соединение потеряно. Пытаемся восстановить...');
-        // Пробуем переподключиться
-        setTimeout(() => {
-          if (peerRef.current) {
-            peerRef.current.restartIce();
-            addDebugInfo('Попытка восстановления ICE соединения');
-          }
-        }, 1000);
-      }
-    };
-    
-    peerRef.current.onsignalingstatechange = () => {
-      addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
-    };
-    
-    peerRef.current.onconnectionstatechange = () => {
-      addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
-    };
-    
-    peerRef.current.onicecandidate = ({ candidate }) => {
-      if (candidate) {
-        addDebugInfo('Отправка ICE кандидата клиенту');
-        socketRef.current.emit('ice-candidate', { candidate, id });
-      }
-    };
+    // Обработка ошибок
+    socketRef.current.on('error', (error) => {
+      addDebugInfo(`Socket.IO ошибка: ${error.message}`);
+    });
   };
 
   // Очистка отладочной информации
@@ -1155,6 +844,112 @@ const CallDetails = () => {
         addDebugInfo(`Ошибка при запуске видео: ${err.message}`);
         setError(`Ошибка воспроизведения: ${err.message}`);
       }
+    }
+  };
+
+  // Обработка offer при переподключении
+  const handleReconnectOffer = async (offer) => {
+    try {
+      addDebugInfo('Начало обработки запроса на переподключение');
+      
+      // Закрываем текущее соединение
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
+      
+      // Очищаем список обработанных треков
+      processedTracksRef.current.clear();
+      
+      // Очищаем видеоэлемент
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => {
+          track.stop();
+          addDebugInfo(`Трек ${track.kind} остановлен при переподключении`);
+        });
+        videoRef.current.srcObject = null;
+      }
+      
+      // Сбрасываем состояния
+      setHasVideo(false);
+      setHasAudio(false);
+      setConnectionStatus('Переподключение...');
+      setAutoplayBlocked(false);
+      
+      // Создаем новое соединение с улучшенными параметрами
+      peerRef.current = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { 
+            urls: 'turn:numb.viagenie.ca',
+            username: 'webrtc@live.com',
+            credential: 'muazkh'
+          },
+          {
+            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+            username: 'webrtc',
+            credential: 'webrtc'
+          }
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        iceTransportPolicy: 'all'
+      });
+      
+      // Настраиваем обработчики событий
+      setupPeerHandlers();
+      
+      // Устанавливаем удаленное описание
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      addDebugInfo('Remote description установлен при переподключении');
+      
+      // Добавляем сохраненные ICE кандидаты, если они есть
+      if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
+        addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов при переподключении`);
+        for (const candidate of pendingIceCandidatesRef.current) {
+          try {
+            await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            addDebugInfo('Сохраненный ICE кандидат успешно добавлен при переподключении');
+          } catch (err) {
+            addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата при переподключении: ${err.message}`);
+          }
+        }
+        pendingIceCandidatesRef.current = [];
+      }
+      
+      // Создаем ответ
+      const answer = await peerRef.current.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
+      // Устанавливаем локальное описание
+      await peerRef.current.setLocalDescription(answer);
+      addDebugInfo('Local description (answer) установлен при переподключении');
+      
+      // Отправляем ответ клиенту
+      socketRef.current.emit('sos-answer', { answer, id });
+      addDebugInfo('Answer отправлен клиенту после переподключения');
+      
+      setConnectionStatus('Ожидание соединения после переподключения...');
+      
+      // Проверяем состояние соединения через некоторое время
+      setTimeout(() => {
+        if (peerRef.current) {
+          const state = peerRef.current.iceConnectionState;
+          addDebugInfo(`Проверка состояния ICE после переподключения: ${state}`);
+          
+          if (state !== 'connected' && state !== 'completed') {
+            addDebugInfo('Соединение не установлено после переподключения, пробуем снова');
+            handleReconnect();
+          }
+        }
+      }, 10000);
+    } catch (err) {
+      addDebugInfo(`Ошибка при переподключении: ${err.message}`);
+      throw err;
     }
   };
 
