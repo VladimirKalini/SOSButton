@@ -66,6 +66,18 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/api', authRoutes);
 app.use('/api/calls', callsRoutes);
 
+// Добавляем маршрут для проверки статуса сервера
+app.get('/api/status', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    webrtc: {
+      activeConnections: activeConnections.size,
+      pendingIceCandidates: pendingIceCandidates.size
+    }
+  });
+});
+
 // Статические файлы
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(path.join(__dirname, 'build')));
@@ -226,15 +238,24 @@ io.on('connection', socket => {
 
   // Обработка ICE кандидатов
   socket.on('ice-candidate', ({ candidate, id }) => {
-    logWithTime(`Получен ICE кандидат для ${id}`);
+    logWithTime(`Получен ICE кандидат для ${id} (тип: ${candidate?.candidate ? candidate.candidate.split(' ')[7] : 'неизвестный'})`);
     
     // Проверяем, существует ли комната
     const room = io.sockets.adapter.rooms.get(id);
     if (room && room.size > 1) {
       socket.to(id).emit('ice-candidate', candidate);
       logWithTime(`ICE кандидат отправлен для ${id}, размер комнаты: ${room.size}`);
+      
+      // Логируем информацию о кандидате
+      if (candidate && candidate.candidate) {
+        const candidateInfo = candidate.candidate.split(' ');
+        if (candidateInfo.length > 7) {
+          const candidateType = candidateInfo[7]; // srflx (STUN), host, relay (TURN)
+          logWithTime(`Тип ICE кандидата: ${candidateType}`);
+        }
+      }
     } else {
-      logWithTime(`Комната ${id} не существует или имеет только одного участника`);
+      logWithTime(`Комната ${id} не существует или имеет только одного участника (размер: ${room ? room.size : 0})`);
       
       // Сохраняем ICE кандидат для последующей отправки
       if (!pendingIceCandidates.has(id)) {
@@ -245,7 +266,25 @@ io.on('connection', socket => {
       
       // Создаем комнату, если она не существует
       socket.join(id);
-      logWithTime(`Создана новая комната: ${id}`);
+      logWithTime(`Socket ${socket.id} присоединился к комнате: ${id}`);
+      
+      // Проверяем, есть ли активные соединения для этой комнаты
+      let roomConnections = 0;
+      activeConnections.forEach(conn => {
+        if (conn.sosId === id) {
+          roomConnections++;
+        }
+      });
+      logWithTime(`Активных соединений для комнаты ${id}: ${roomConnections}`);
+      
+      // Если есть охранники, отправляем им уведомление о необходимости присоединиться к комнате
+      const guards = Array.from(activeConnections.values()).filter(conn => conn.type === 'guard');
+      if (guards.length > 0) {
+        logWithTime(`Отправляем напоминание ${guards.length} охранникам о необходимости присоединиться к комнате ${id}`);
+        socket.to('guard').emit('sos-reminder', { id });
+      } else {
+        logWithTime('Нет активных охранников для отправки напоминания');
+      }
     }
   });
 

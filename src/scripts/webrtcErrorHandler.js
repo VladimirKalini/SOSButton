@@ -187,4 +187,188 @@ export const fixCommonWebRTCIssues = (peerConnection) => {
   }
   
   return result;
+};
+
+/**
+ * Проверяет порты, необходимые для WebRTC
+ * @returns {Promise<Object>} Результаты проверки портов
+ */
+export const checkWebRTCPorts = async () => {
+  const result = {
+    udpBlocked: false,
+    stunPortsBlocked: false,
+    turnPortsBlocked: false,
+    details: {}
+  };
+  
+  try {
+    // Создаем временное соединение для проверки
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },  // Стандартный STUN порт 19302
+        { urls: 'stun:stun1.l.google.com:3478' },  // Альтернативный STUN порт 3478
+        { 
+          urls: 'turn:turn.anyfirewall.com:443?transport=tcp', // TURN через TCP на порту 443
+          username: 'webrtc',
+          credential: 'webrtc'
+        },
+        { 
+          urls: 'turn:numb.viagenie.ca:3478', // TURN через UDP на порту 3478
+          username: 'webrtc@live.com',
+          credential: 'muazkh'
+        }
+      ]
+    });
+    
+    // Отслеживаем типы кандидатов
+    const candidateTypes = {
+      host: false,
+      srflx: false, // STUN
+      relay: false  // TURN
+    };
+    
+    // Отслеживаем порты
+    const ports = {
+      udp: new Set(),
+      tcp: new Set()
+    };
+    
+    // Ожидаем сбор ICE кандидатов
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, 5000); // Таймаут 5 секунд
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          const candidate = event.candidate.candidate;
+          
+          // Определяем тип кандидата
+          if (candidate.includes(' host ')) {
+            candidateTypes.host = true;
+          } else if (candidate.includes(' srflx ')) {
+            candidateTypes.srflx = true;
+            
+            // Извлекаем порт из кандидата
+            const parts = candidate.split(' ');
+            if (parts.length > 5) {
+              const port = parseInt(parts[5], 10);
+              if (candidate.includes(' UDP ')) {
+                ports.udp.add(port);
+              } else if (candidate.includes(' TCP ')) {
+                ports.tcp.add(port);
+              }
+            }
+          } else if (candidate.includes(' relay ')) {
+            candidateTypes.relay = true;
+            
+            // Извлекаем порт из кандидата
+            const parts = candidate.split(' ');
+            if (parts.length > 5) {
+              const port = parseInt(parts[5], 10);
+              if (candidate.includes(' UDP ')) {
+                ports.udp.add(port);
+              } else if (candidate.includes(' TCP ')) {
+                ports.tcp.add(port);
+              }
+            }
+          }
+        } else if (event.candidate === null) {
+          // Сбор кандидатов завершен
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
+      
+      // Создаем data channel для запуска ICE
+      pc.createDataChannel('testChannel');
+      
+      // Создаем offer для запуска ICE
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .catch(err => {
+          console.error('Ошибка при создании offer:', err);
+          clearTimeout(timeout);
+          resolve();
+        });
+    });
+    
+    // Закрываем соединение
+    pc.close();
+    
+    // Анализируем результаты
+    result.udpBlocked = !candidateTypes.host && !candidateTypes.srflx && !candidateTypes.relay;
+    result.stunPortsBlocked = !candidateTypes.srflx;
+    result.turnPortsBlocked = !candidateTypes.relay;
+    
+    result.details = {
+      candidateTypes,
+      ports: {
+        udp: Array.from(ports.udp),
+        tcp: Array.from(ports.tcp)
+      }
+    };
+    
+    return result;
+  } catch (err) {
+    console.error('Ошибка при проверке портов WebRTC:', err);
+    result.error = err.message;
+    return result;
+  }
+};
+
+/**
+ * Проверяет соединение с сигнальным сервером
+ * @param {string} serverUrl - URL сигнального сервера
+ * @returns {Promise<Object>} Результаты проверки
+ */
+export const checkSignalingServer = async (serverUrl) => {
+  const result = {
+    connected: false,
+    socketId: null,
+    error: null
+  };
+  
+  try {
+    // Проверяем, доступен ли Socket.IO
+    if (!window.io) {
+      result.error = 'Socket.IO не доступен';
+      return result;
+    }
+    
+    // Пробуем подключиться к серверу
+    const socket = window.io(serverUrl, { 
+      transports: ['polling', 'websocket'],
+      timeout: 5000
+    });
+    
+    // Ожидаем соединение или ошибку
+    await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        result.error = 'Таймаут соединения';
+        resolve();
+      }, 5000);
+      
+      socket.on('connect', () => {
+        result.connected = true;
+        result.socketId = socket.id;
+        clearTimeout(timeout);
+        resolve();
+      });
+      
+      socket.on('connect_error', (err) => {
+        result.error = `Ошибка соединения: ${err.message}`;
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+    
+    // Закрываем соединение
+    if (socket) {
+      socket.disconnect();
+    }
+    
+    return result;
+  } catch (err) {
+    result.error = `Непредвиденная ошибка: ${err.message}`;
+    return result;
+  }
 }; 

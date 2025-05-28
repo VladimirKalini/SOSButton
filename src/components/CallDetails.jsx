@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../authContext';
 import { io } from 'socket.io-client';
-import { checkWebRTCSupport, diagnoseWebRTCError, getWebRTCDebugInfo, fixCommonWebRTCIssues, checkNetworkForWebRTC } from '../scripts/webrtcErrorHandler';
+import { checkWebRTCSupport, diagnoseWebRTCError, getWebRTCDebugInfo, fixCommonWebRTCIssues, checkWebRTCPorts, checkSignalingServer } from '../scripts/webrtcErrorHandler';
 
 const CallDetails = () => {
   const { id } = useParams();
@@ -714,9 +714,13 @@ const CallDetails = () => {
     
     peerRef.current.onicecandidate = ({ candidate }) => {
       if (candidate) {
-        addDebugInfo('Отправка ICE кандидата клиенту');
+        addDebugInfo(`Сгенерирован ICE кандидат: ${candidate.candidate.split(' ')[0]}`);
         socketRef.current.emit('ice-candidate', { candidate, id });
       }
+    };
+    
+    peerRef.current.onicecandidateerror = (event) => {
+      addDebugInfo(`Ошибка ICE кандидата: ${event.errorText || event.error?.errorText || 'Неизвестная ошибка'}`);
     };
     
     peerRef.current.oniceconnectionstatechange = () => {
@@ -727,33 +731,131 @@ const CallDetails = () => {
         
         if (state === 'connected' || state === 'completed') {
           setConnectionStatus('Соединение установлено');
-        } else if (state === 'failed' || state === 'disconnected') {
+          
+          // Проверяем наличие треков
+          const receivers = peerRef.current.getReceivers();
+          addDebugInfo(`Получено ${receivers.length} треков`);
+          
+          // Если нет видео/аудио треков после успешного соединения, возможно проблема с медиа
+          if (receivers.length === 0) {
+            addDebugInfo('Предупреждение: соединение установлено, но нет медиа треков');
+          }
+        } else if (state === 'failed') {
+          setError('Соединение не удалось установить. Пробуем переподключиться...');
+          addDebugInfo('ICE соединение не удалось установить, пробуем перезапустить ICE');
+          
+          // Пробуем перезапустить ICE
+          try {
+            if (peerRef.current && peerRef.current.restartIce) {
+              peerRef.current.restartIce();
+              addDebugInfo('ICE перезапущен');
+            } else {
+              addDebugInfo('Функция restartIce недоступна, выполняем полное переподключение');
+              setTimeout(() => {
+                handleReconnect();
+              }, 1000);
+            }
+          } catch (err) {
+            addDebugInfo(`Ошибка при перезапуске ICE: ${err.message}`);
+            // Пробуем полное переподключение
+            setTimeout(() => {
+              handleReconnect();
+            }, 1000);
+          }
+        } else if (state === 'disconnected') {
           setError('Соединение потеряно. Пытаемся восстановить...');
-          // Пробуем переподключиться
+          addDebugInfo('ICE соединение разорвано, ожидаем восстановления...');
+          
+          // Даем некоторое время на автоматическое восстановление
           setTimeout(() => {
-            handleReconnect();
-          }, 2000);
+            if (peerRef.current && peerRef.current.iceConnectionState === 'disconnected') {
+              addDebugInfo('Соединение не восстановилось автоматически, выполняем переподключение');
+              handleReconnect();
+            }
+          }, 5000);
         }
       } catch (err) {
         addDebugInfo(`Ошибка в обработчике oniceconnectionstatechange: ${err.message}`);
       }
     };
     
+    peerRef.current.onicegatheringstatechange = () => {
+      const state = peerRef.current.iceGatheringState;
+      addDebugInfo(`ICE сбор изменился: ${state}`);
+      
+      if (state === 'complete') {
+        addDebugInfo('Сбор ICE кандидатов завершен');
+        
+        // Если после завершения сбора ICE соединение все еще не установлено,
+        // возможно, проблема с NAT/брандмауэром
+        if (peerRef.current.iceConnectionState === 'checking' || 
+            peerRef.current.iceConnectionState === 'new') {
+          addDebugInfo('Предупреждение: ICE сбор завершен, но соединение не установлено');
+          
+          // Проверяем наличие srflx или relay кандидатов (STUN/TURN)
+          const hasPublicCandidate = pendingIceCandidatesRef.current.some(
+            c => c.candidate && (c.candidate.includes('srflx') || c.candidate.includes('relay'))
+          );
+          
+          if (!hasPublicCandidate) {
+            addDebugInfo('Предупреждение: не обнаружены публичные ICE кандидаты (srflx/relay)');
+            addDebugInfo('Возможно, проблема с доступом к STUN/TURN серверам');
+          }
+        }
+      }
+    };
+    
     peerRef.current.onsignalingstatechange = () => {
-      addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
+      const state = peerRef.current.signalingState;
+      addDebugInfo(`Signaling состояние: ${state}`);
+      
+      if (state === 'stable') {
+        addDebugInfo('Сигнальное соединение стабильно');
+      } else if (state === 'closed') {
+        addDebugInfo('Сигнальное соединение закрыто');
+      }
     };
     
     peerRef.current.onconnectionstatechange = () => {
-      addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
+      const state = peerRef.current.connectionState;
+      addDebugInfo(`Connection состояние: ${state}`);
       
       // Если соединение закрыто или не удалось установить, пробуем переподключиться
-      if (peerRef.current.connectionState === 'failed' || 
-          peerRef.current.connectionState === 'closed') {
-        addDebugInfo('Соединение закрыто или не удалось установить. Пробуем переподключиться через 2 секунды...');
+      if (state === 'failed') {
+        addDebugInfo('Соединение не удалось установить');
         setTimeout(() => {
           handleReconnect();
         }, 2000);
+      } else if (state === 'connected') {
+        addDebugInfo('Соединение успешно установлено');
+        
+        // Проверяем статистику соединения
+        if (peerRef.current.getStats) {
+          peerRef.current.getStats().then(stats => {
+            let inboundRtpStats = [];
+            stats.forEach(stat => {
+              if (stat.type === 'inbound-rtp') {
+                inboundRtpStats.push(stat);
+                addDebugInfo(`Получаем ${stat.kind} поток: ${stat.packetsReceived} пакетов`);
+              }
+            });
+            
+            if (inboundRtpStats.length === 0) {
+              addDebugInfo('Предупреждение: нет входящих RTP потоков');
+            }
+          }).catch(err => {
+            addDebugInfo(`Ошибка при получении статистики: ${err.message}`);
+          });
+        }
       }
+    };
+    
+    // Обработка ошибок датаканалов
+    peerRef.current.ondatachannel = (event) => {
+      const channel = event.channel;
+      channel.onerror = (error) => {
+        addDebugInfo(`Ошибка датаканала: ${error.message || 'Неизвестная ошибка'}`);
+      };
     };
   };
 
@@ -1121,56 +1223,61 @@ const CallDetails = () => {
       // Проверка базового онлайн-статуса
       addDebugInfo(`Онлайн статус: ${navigator.onLine ? 'Подключен' : 'Отключен'}`);
       
-      // Проверка доступности STUN/TURN серверов
-      addDebugInfo('Проверка доступности STUN серверов...');
-      const networkCheck = await checkNetworkForWebRTC();
-      
-      addDebugInfo(`STUN сервер доступен: ${networkCheck.stunReachable ? 'Да' : 'Нет'}`);
-      
-      if (!networkCheck.stunReachable) {
-        addDebugInfo('Внимание: STUN сервер недоступен. Это может препятствовать установлению P2P соединения.');
-        addDebugInfo('Возможные причины:');
-        addDebugInfo('- Блокировка на уровне брандмауэра');
-        addDebugInfo('- Проблемы с сетевым соединением');
-        addDebugInfo('- Ограничения корпоративной сети');
-      }
-      
-      // Проверка WebSocket соединения
-      if (socketRef.current) {
-        addDebugInfo(`Socket.IO соединение: ${socketRef.current.connected ? 'Подключено' : 'Отключено'}`);
-        
-        if (!socketRef.current.connected) {
-          addDebugInfo('Попытка переподключения Socket.IO...');
-          socketRef.current.connect();
-          
-          // Ждем 2 секунды и проверяем статус
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          addDebugInfo(`Socket.IO статус после попытки: ${socketRef.current.connected ? 'Подключено' : 'Отключено'}`);
-        }
-      } else {
-        addDebugInfo('Socket.IO соединение не инициализировано');
-      }
-      
       // Проверка доступности сервера
+      addDebugInfo('Проверка доступности сервера...');
       try {
-        addDebugInfo('Проверка доступности сервера...');
-        const response = await axios.get('/api/status', {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 5000
-        });
-        addDebugInfo(`Сервер доступен, статус: ${response.status}`);
+        const response = await axios.get(`${serverUrl}/api/status`);
+        addDebugInfo(`Сервер доступен: ${response.data.status}`);
       } catch (err) {
-        addDebugInfo(`Ошибка при проверке доступности сервера: ${err.message}`);
+        addDebugInfo(`Ошибка доступности сервера: ${err.message}`);
+      }
+      
+      // Проверка соединения с сигнальным сервером
+      addDebugInfo('Проверка соединения с сигнальным сервером...');
+      const signalingCheck = await checkSignalingServer(serverUrl);
+      if (signalingCheck.connected) {
+        addDebugInfo(`Socket.IO соединение: Подключено (ID: ${signalingCheck.socketId})`);
+      } else {
+        addDebugInfo(`Socket.IO соединение: Ошибка - ${signalingCheck.error}`);
+      }
+      
+      // Проверка портов WebRTC
+      addDebugInfo('Проверка портов WebRTC...');
+      const portsCheck = await checkWebRTCPorts();
+      
+      if (portsCheck.error) {
+        addDebugInfo(`Ошибка при проверке портов: ${portsCheck.error}`);
+      } else {
+        addDebugInfo(`UDP заблокирован: ${portsCheck.udpBlocked ? 'Да' : 'Нет'}`);
+        addDebugInfo(`STUN порты заблокированы: ${portsCheck.stunPortsBlocked ? 'Да' : 'Нет'}`);
+        addDebugInfo(`TURN порты заблокированы: ${portsCheck.turnPortsBlocked ? 'Да' : 'Нет'}`);
+        
+        if (portsCheck.details.candidateTypes) {
+          addDebugInfo(`Типы кандидатов: host=${portsCheck.details.candidateTypes.host}, srflx=${portsCheck.details.candidateTypes.srflx}, relay=${portsCheck.details.candidateTypes.relay}`);
+        }
       }
       
       // Рекомендации
-      addDebugInfo('Рекомендации по сети:');
-      addDebugInfo('1. Убедитесь, что ваш брандмауэр не блокирует WebRTC трафик (порты UDP)');
-      addDebugInfo('2. Проверьте стабильность интернет-соединения');
-      addDebugInfo('3. Если вы используете VPN, попробуйте отключить его');
-      addDebugInfo('4. Если вы в корпоративной сети, свяжитесь с администратором');
+      addDebugInfo('Рекомендации:');
+      if (portsCheck.udpBlocked) {
+        addDebugInfo('1. Проверьте настройки брандмауэра - UDP трафик заблокирован');
+      }
+      if (portsCheck.stunPortsBlocked) {
+        addDebugInfo('2. Проверьте доступность STUN серверов (порты 19302, 3478)');
+      }
+      if (portsCheck.turnPortsBlocked) {
+        addDebugInfo('3. Проверьте доступность TURN серверов');
+      }
+      if (!signalingCheck.connected) {
+        addDebugInfo('4. Проверьте соединение с сигнальным сервером');
+      }
       
-      setShowFullDebug(true);
+      // Общий вывод
+      if (!portsCheck.udpBlocked && !portsCheck.stunPortsBlocked && signalingCheck.connected) {
+        addDebugInfo('Сетевое соединение в порядке. Если проблемы с видео сохраняются, проблема может быть в другом месте.');
+      } else {
+        addDebugInfo('Обнаружены проблемы с сетевым соединением. Следуйте рекомендациям выше.');
+      }
     } catch (err) {
       addDebugInfo(`Ошибка при проверке сети: ${err.message}`);
     }
@@ -1511,7 +1618,7 @@ const CallDetails = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  Проверка сети
+                  Проверка сетевого соединения
                 </button>
                 
                 <button 
