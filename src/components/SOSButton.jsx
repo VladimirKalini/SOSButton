@@ -587,17 +587,32 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      alignItems: 'center', 
+      gap: '1.5rem',
+      padding: '2rem',
+      maxWidth: '400px',
+      margin: '0 auto'
+    }}>
       {error && (
         <div style={{ 
           color: 'white', 
           backgroundColor: '#dc3545', 
-          padding: '0.75rem 1rem', 
-          borderRadius: '0.25rem',
+          padding: '1rem 1.25rem', 
+          borderRadius: '0.5rem',
           width: '100%',
-          maxWidth: '300px',
-          textAlign: 'center'
+          boxShadow: '0 4px 6px rgba(220, 53, 69, 0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: '500'
         }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+            <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
+          </svg>
           {error}
         </div>
       )}
@@ -605,79 +620,131 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       <button
         onClick={handleSOS}
         style={{
-          fontSize: '1.5rem',
-          padding: '3rem',
-          backgroundColor: sending ? '#999' : '#d32f2f',
+          fontSize: '1.75rem',
+          fontWeight: 'bold',
+          padding: sending ? '3.5rem' : '4rem',
+          backgroundColor: sending ? '#dc3545' : '#e53935',
           color: '#fff',
           border: 'none',
           borderRadius: '50%',
-          cursor: sending ? 'not-allowed' : 'pointer',
-          boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-          transition: 'all 0.3s ease'
+          cursor: 'pointer',
+          boxShadow: sending 
+            ? '0 6px 12px rgba(220, 53, 69, 0.4), inset 0 0 0 4px rgba(255, 255, 255, 0.2)' 
+            : '0 8px 16px rgba(229, 57, 53, 0.4), inset 0 0 0 6px rgba(255, 255, 255, 0.2)',
+          transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+          position: 'relative',
+          overflow: 'hidden',
+          transform: sending ? 'scale(0.95)' : 'scale(1)',
+          animation: sending ? 'pulse 2s infinite' : 'none'
         }}
       >
-        {sending ? 'ОТМЕНА SOS' : 'SOS'}
+        {sending ? 'ОТМЕНА' : 'SOS'}
+        <style>{`
+          @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(220, 53, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+          }
+        `}</style>
       </button>
       
       {sending && (
         <div style={{ 
-          padding: '1rem',
-          backgroundColor: '#f8f9fa',
-          borderRadius: '0.25rem',
-          border: '1px solid #dee2e6',
+          padding: '1.25rem',
+          backgroundColor: '#fff',
+          borderRadius: '0.75rem',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
           width: '100%',
-          maxWidth: '300px',
-          marginTop: '1rem'
+          marginTop: '1rem',
+          border: '1px solid rgba(0, 0, 0, 0.05)'
         }}>
           <div style={{ 
             color: '#28a745', 
             fontWeight: 'bold', 
-            marginBottom: '0.5rem',
-            textAlign: 'center'
+            marginBottom: '1rem',
+            textAlign: 'center',
+            fontSize: '1.1rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
+            </svg>
             SOS сигнал отправлен
           </div>
           
           {location && (
-            <div style={{ marginBottom: '0.5rem', fontSize: '0.9rem' }}>
-              <div><strong>Широта:</strong> {location.latitude.toFixed(6)}</div>
-              <div><strong>Долгота:</strong> {location.longitude.toFixed(6)}</div>
+            <div style={{ 
+              marginBottom: '1rem', 
+              padding: '0.75rem',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '0.5rem',
+              fontSize: '0.9rem',
+              border: '1px solid #e9ecef'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <strong>Широта:</strong> 
+                <span>{location.latitude.toFixed(6)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <strong>Долгота:</strong> 
+                <span>{location.longitude.toFixed(6)}</span>
+              </div>
             </div>
           )}
           
           <div style={{ 
             color: '#dc3545', 
             fontWeight: 'bold',
-            marginBottom: '0.5rem',
-            textAlign: 'center'
+            marginBottom: '1rem',
+            textAlign: 'center',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '0.5rem',
+            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+            borderRadius: '0.5rem'
           }}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+              <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+            </svg>
             {backgroundMode ? 'Запись продолжается в фоновом режиме' : 'Идет запись с камеры'}
           </div>
           
           <div style={{ 
-            fontSize: '0.8rem', 
+            fontSize: '0.85rem', 
             color: '#6c757d',
-            textAlign: 'center',
-            marginTop: '0.5rem'
+            padding: '0.5rem',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '0.5rem',
+            border: '1px solid #e9ecef',
+            marginBottom: '0.75rem'
           }}>
-            {debugMessage}
-          </div>
-          
-          <div style={{ 
-            fontSize: '0.8rem', 
-            color: '#6c757d',
-            textAlign: 'center',
-            marginTop: '0.5rem'
-          }}>
-            Состояние: {signalingState}
+            <div style={{ marginBottom: '0.5rem' }}>
+              <strong>Статус:</strong> {debugMessage}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <strong>Соединение:</strong> 
+              <span style={{ 
+                color: signalingState === 'stable' ? '#28a745' : '#ffc107',
+                fontWeight: '500'
+              }}>
+                {signalingState}
+              </span>
+            </div>
           </div>
           
           {reconnectAttempts > 0 && (
             <div style={{ 
-              fontSize: '0.8rem', 
+              fontSize: '0.85rem', 
               color: '#dc3545',
               textAlign: 'center',
-              marginTop: '0.5rem'
+              marginBottom: '0.75rem',
+              padding: '0.5rem',
+              backgroundColor: 'rgba(220, 53, 69, 0.1)',
+              borderRadius: '0.5rem',
+              fontWeight: '500'
             }}>
               Попыток переподключения: {reconnectAttempts} из {maxReconnectAttempts}
             </div>
@@ -688,16 +755,24 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
               onClick={reinitializeConnection}
               style={{
                 width: '100%',
-                padding: '0.5rem',
+                padding: '0.75rem',
                 backgroundColor: '#007bff',
                 color: '#fff',
                 border: 'none',
-                borderRadius: '0.25rem',
+                borderRadius: '0.5rem',
                 cursor: 'pointer',
-                marginTop: '0.5rem',
-                fontSize: '0.9rem'
+                fontWeight: 'bold',
+                boxShadow: '0 2px 4px rgba(0, 123, 255, 0.2)',
+                transition: 'all 0.2s ease',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
               }}
             >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+                <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
+                <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
+              </svg>
               Переподключиться
             </button>
           )}
@@ -707,10 +782,10 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       {streaming && !backgroundMode && (
         <div style={{ 
           width: '100%', 
-          maxWidth: '300px',
-          borderRadius: '0.25rem',
+          borderRadius: '0.75rem',
           overflow: 'hidden',
-          border: '1px solid #dee2e6'
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          border: '1px solid rgba(0, 0, 0, 0.05)'
         }}>
           <video
             ref={videoRef}
@@ -719,7 +794,8 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
             playsInline
             style={{ 
               width: '100%',
-              borderRadius: '0.25rem'
+              borderRadius: '0.5rem',
+              backgroundColor: '#000'
             }}
           />
         </div>

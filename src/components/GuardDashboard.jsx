@@ -14,6 +14,7 @@ const GuardDashboard = () => {
   const [page, setPage] = useState(1);
   const { token } = useAuth();
   const serverUrl = 'https://1fxpro.vip';
+  const [notification, setNotification] = useState({ show: false, message: '', type: '' });
 
   useEffect(() => {
     const socket = io(serverUrl, { 
@@ -88,22 +89,97 @@ const GuardDashboard = () => {
       await axios.delete(`/api/calls/${id}/cancel`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setActiveCalls(prev => prev.filter(call => call.id !== id));
+      
+      // Обновляем список активных вызовов
+      setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
+      
+      // Показываем уведомление об успешной отмене
+      setNotification({
+        show: true,
+        message: 'Вызов успешно отменен',
+        type: 'success'
+      });
+      
+      // Скрываем уведомление через 3 секунды
+      setTimeout(() => {
+        setNotification({ show: false, message: '', type: '' });
+      }, 3000);
     } catch (err) {
+      console.error('Ошибка при отмене вызова:', err);
+      
       setError('Не удалось отменить вызов');
-      console.error(err);
+      
+      // Показываем уведомление об ошибке
+      setNotification({
+        show: true,
+        message: 'Не удалось отменить вызов: ' + (err.response?.data?.message || err.message),
+        type: 'error'
+      });
+      
+      // Скрываем уведомление через 3 секунды
+      setTimeout(() => {
+        setNotification({ show: false, message: '', type: '' });
+      }, 3000);
     }
   };
 
+  const handleLogout = () => {
+    // Implement the logout logic here
+  };
+
   return (
-    <div>
+    <div style={{ padding: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h2>Панель охраны</h2>
+        <button 
+          onClick={handleLogout} 
+          style={{ 
+            padding: '0.5rem 1rem', 
+            backgroundColor: '#dc3545', 
+            color: 'white', 
+            border: 'none',
+            borderRadius: '0.25rem',
+            cursor: 'pointer'
+          }}
+        >
+          Выйти
+        </button>
+      </div>
+
+      {/* Уведомление */}
+      {notification.show && (
+        <div style={{ 
+          padding: '0.75rem 1rem',
+          marginBottom: '1rem',
+          borderRadius: '0.25rem',
+          backgroundColor: notification.type === 'success' ? '#d4edda' : '#f8d7da',
+          color: notification.type === 'success' ? '#155724' : '#721c24',
+          border: `1px solid ${notification.type === 'success' ? '#c3e6cb' : '#f5c6cb'}`
+        }}>
+          {notification.message}
+        </div>
+      )}
+
+      {error && (
+        <div style={{ 
+          padding: '0.75rem 1rem',
+          marginBottom: '1rem',
+          borderRadius: '0.25rem',
+          backgroundColor: '#f8d7da',
+          color: '#721c24',
+          border: '1px solid #f5c6cb'
+        }}>
+          {error}
+        </div>
+      )}
+
       <div style={{ marginBottom: '1rem' }}>
         <button 
           onClick={() => setActiveTab('active')} 
           style={{ 
             padding: '0.5rem 1rem', 
             backgroundColor: activeTab === 'active' ? '#007bff' : '#f8f9fa',
-            color: activeTab === 'active' ? 'white' : 'black',
+            color: activeTab === 'active' ? 'white' : '#212529',
             border: '1px solid #dee2e6',
             borderRadius: '0.25rem 0 0 0.25rem',
             cursor: 'pointer'
@@ -116,18 +192,16 @@ const GuardDashboard = () => {
           style={{ 
             padding: '0.5rem 1rem', 
             backgroundColor: activeTab === 'history' ? '#007bff' : '#f8f9fa',
-            color: activeTab === 'history' ? 'white' : 'black',
+            color: activeTab === 'history' ? 'white' : '#212529',
             border: '1px solid #dee2e6',
-            borderRadius: '0 0.25rem 0.25rem 0',
             borderLeft: 'none',
+            borderRadius: '0 0.25rem 0.25rem 0',
             cursor: 'pointer'
           }}
         >
           История вызовов
         </button>
       </div>
-
-      {error && <div style={{ color: 'red', marginBottom: '1rem' }}>{error}</div>}
 
       {loading ? (
         <div>Загрузка...</div>

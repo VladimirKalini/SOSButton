@@ -56,7 +56,7 @@ export default function Dashboard() {
   const handleCancel = async id => {
     const token = localStorage.getItem('jwtToken')
     try {
-      await axios.post(`/api/calls/${id}/cancel}`, {}, {
+      await axios.delete(`/api/calls/${id}/cancel`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       setActive(a => a.filter(c => c._id !== id))
