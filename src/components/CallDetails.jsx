@@ -658,84 +658,102 @@ const CallDetails = () => {
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
 
-    const initializeGoogleMap = () => {
+    // Используем OpenStreetMap вместо Google Maps (не требует API ключа)
+    const createMapWithOSM = () => {
       try {
-        addDebugInfo('Инициализация Google Maps...');
-        
-        // Создаем скрипт для загрузки Google Maps API
-        const script = document.createElement('script');
-        const apiKey = 'AIzaSyBEa9adTA4gvPPd-F0OLG0Bh-YmefDpCN0'; // Используем API ключ
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap`;
-        script.async = true;
-        script.defer = true;
-        
-        // Создаем глобальную функцию инициализации карты
-        window.initMap = () => {
-          if (!mapRef.current) return;
+        addDebugInfo('Инициализация карты OpenStreetMap...');
+        // Проверяем, загружен ли Leaflet
+        if (!window.L) {
+          addDebugInfo('Загрузка библиотеки Leaflet...');
+          // Загружаем CSS для Leaflet
+          const linkElement = document.createElement('link');
+          linkElement.rel = 'stylesheet';
+          linkElement.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+          linkElement.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
+          linkElement.crossOrigin = '';
+          document.head.appendChild(linkElement);
           
-          const lat = parseFloat(call.latitude);
-          const lng = parseFloat(call.longitude);
-          
-          if (isNaN(lat) || isNaN(lng)) {
-            console.error('Некорректные координаты:', call.latitude, call.longitude);
-            addDebugInfo(`Некорректные координаты: ${call.latitude}, ${call.longitude}`);
-            return;
-          }
-          
-          // Создаем карту
-          const map = new window.google.maps.Map(mapRef.current, {
-            center: { lat, lng },
-            zoom: 15,
-            mapTypeId: window.google.maps.MapTypeId.ROADMAP
-          });
-          
-          // Добавляем маркер
-          const marker = new window.google.maps.Marker({
-            position: { lat, lng },
-            map: map,
-            title: 'SOS местоположение'
-          });
-          
-          // Добавляем информационное окно
-          const infoWindow = new window.google.maps.InfoWindow({
-            content: '<div><strong>SOS местоположение</strong></div>'
-          });
-          
-          marker.addListener('click', () => {
-            infoWindow.open(map, marker);
-          });
-          
-          // Открываем информационное окно по умолчанию
-          infoWindow.open(map, marker);
-          
-          addDebugInfo('Карта успешно инициализирована');
-        };
-        
-        // Добавляем обработчик ошибок
-        script.onerror = () => {
-          addDebugInfo('Ошибка при загрузке Google Maps API');
-          console.error('Не удалось загрузить Google Maps API');
-        };
-        
-        // Добавляем скрипт на страницу
-        document.head.appendChild(script);
-        
+          // Загружаем JavaScript для Leaflet
+          const script = document.createElement('script');
+          script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+          script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
+          script.crossOrigin = '';
+          script.onload = () => {
+            addDebugInfo('Библиотека Leaflet загружена');
+            initializeOSMap(call.latitude, call.longitude);
+          };
+          document.head.appendChild(script);
+        } else {
+          initializeOSMap(call.latitude, call.longitude);
+        }
       } catch (error) {
         console.error('Ошибка при создании карты:', error);
         addDebugInfo(`Ошибка при создании карты: ${error.message}`);
       }
     };
+
+    const initializeOSMap = (lat, lng) => {
+      if (!mapRef.current) {
+        addDebugInfo('Ошибка: mapRef.current отсутствует');
+        return;
+      }
+      
+      try {
+        addDebugInfo(`Инициализация карты с координатами: ${lat}, ${lng}`);
+        const latNum = parseFloat(lat);
+        const lngNum = parseFloat(lng);
+        
+        if (isNaN(latNum) || isNaN(lngNum)) {
+          console.error('Некорректные координаты:', lat, lng);
+          addDebugInfo(`Некорректные координаты: ${lat}, ${lng}`);
+          return;
+        }
+        
+        // Очищаем контейнер карты, если там уже есть карта
+        mapRef.current.innerHTML = '';
+        
+        // Создаем карту
+        const map = window.L.map(mapRef.current).setView([latNum, lngNum], 15);
+        
+        // Добавляем слой OpenStreetMap
+        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        
+        // Добавляем маркер
+        const marker = window.L.marker([latNum, lngNum]).addTo(map);
+        marker.bindPopup("SOS местоположение").openPopup();
+        
+        mapMarkerRef.current = marker;
+        
+        console.log('Карта OpenStreetMap успешно инициализирована');
+        addDebugInfo('Карта успешно инициализирована');
+        
+        // Принудительно обновляем размер карты после рендеринга
+        setTimeout(() => {
+          if (map) {
+            map.invalidateSize();
+            addDebugInfo('Размер карты обновлен');
+          }
+        }, 500);
+      } catch (error) {
+        console.error('Ошибка при инициализации карты:', error);
+        addDebugInfo(`Ошибка при инициализации карты: ${error.message}`);
+      }
+    };
     
-    // Проверяем, загружен ли уже Google Maps API
-    if (window.google && window.google.maps) {
-      window.initMap();
-    } else {
-      initializeGoogleMap();
-    }
+    createMapWithOSM();
     
     // Очистка при размонтировании
     return () => {
-      delete window.initMap;
+      if (window.L && mapRef.current && mapRef.current._leaflet_id) {
+        try {
+          window.L.DomEvent.off(mapRef.current);
+          mapRef.current._leaflet = null;
+        } catch (e) {
+          console.error('Ошибка при очистке карты:', e);
+        }
+      }
     };
   }, [call]);
 
@@ -744,7 +762,11 @@ const CallDetails = () => {
       await axios.delete(`/api/calls/${id}/cancel`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      navigate('/');
+      // Не перенаправляем сразу на главную страницу
+      setError('Вызов отменен');
+      setTimeout(() => {
+        navigate('/');
+      }, 3000);
     } catch (err) {
       setError('Не удалось отменить вызов');
       console.error(err);
@@ -814,12 +836,283 @@ const CallDetails = () => {
       headers: { Authorization: `Bearer ${token}` }
     }).then(response => {
       addDebugInfo('Данные вызова успешно обновлены');
+      
+      // Принудительно пересоздаем соединение с сокетом
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+      
+      socketRef.current = io(serverUrl, {
+        auth: { token },
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        timeout: 20000
+      });
+      
+      socketRef.current.on('connect', () => {
+        addDebugInfo('Socket.IO переподключен');
+        socketRef.current.emit('join-room', id);
+      });
+      
+      socketRef.current.on('connect_error', (err) => {
+        addDebugInfo(`Ошибка переподключения Socket.IO: ${err.message}`);
+        setError('Не удалось переподключиться к серверу');
+      });
+      
+      // Устанавливаем обработчики событий заново
+      setupSocketHandlers();
+      
+      // Обновляем данные вызова
       setCall(response.data);
     }).catch(err => {
       addDebugInfo(`Ошибка при обновлении данных вызова: ${err.message}`);
       // Даже если не удалось обновить данные, пробуем переподключиться с текущими данными
       setCall(prev => ({...prev}));
     });
+  };
+
+  // Настройка обработчиков сокета
+  const setupSocketHandlers = () => {
+    if (!socketRef.current) return;
+    
+    socketRef.current.on('ice-candidate', async (candidate) => {
+      try {
+        addDebugInfo('Получен ICE кандидат от клиента');
+        if (peerRef.current && peerRef.current.remoteDescription) {
+          await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          addDebugInfo('ICE кандидат успешно добавлен');
+        } else {
+          addDebugInfo('Не удалось добавить ICE кандидата: нет remoteDescription');
+          // Сохраняем кандидата для последующего добавления
+          const pendingCandidates = pendingIceCandidatesRef.current || [];
+          pendingIceCandidatesRef.current = [...pendingCandidates, candidate];
+          addDebugInfo(`ICE кандидат сохранен (всего: ${pendingIceCandidatesRef.current.length})`);
+        }
+      } catch (err) {
+        addDebugInfo(`Ошибка при добавлении ICE кандидата: ${err.message}`);
+      }
+    });
+
+    socketRef.current.on('sos-canceled', () => {
+      setError('SOS вызов был отменен');
+      setTimeout(() => navigate('/'), 3000);
+    });
+
+    socketRef.current.on('sos-reconnect', async ({ offer, id: reconnectId }) => {
+      addDebugInfo(`Получен запрос на переподключение от клиента: ${reconnectId}`);
+      if (reconnectId === id) {
+        try {
+          handleReconnectOffer(offer);
+        } catch (err) {
+          addDebugInfo(`Ошибка при переподключении: ${err.message}`);
+          setError('Не удалось переподключиться: ' + err.message);
+        }
+      }
+    });
+    
+    // Обработка пинга для поддержания соединения
+    socketRef.current.on('ping', () => {
+      socketRef.current.emit('pong');
+    });
+  };
+  
+  // Обработка offer при переподключении
+  const handleReconnectOffer = async (offer) => {
+    try {
+      // Закрываем текущее соединение
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
+      
+      // Очищаем список обработанных треков
+      processedTracksRef.current.clear();
+      
+      // Создаем новое соединение
+      peerRef.current = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+        ],
+        iceTransportPolicy: 'all',
+        iceCandidatePoolSize: 10
+      });
+      
+      // Настраиваем обработчики событий
+      setupPeerHandlers();
+      
+      // Устанавливаем удаленное описание
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      addDebugInfo('Remote description установлен');
+      
+      // Добавляем сохраненные ICE кандидаты, если они есть
+      if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
+        addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
+        for (const candidate of pendingIceCandidatesRef.current) {
+          try {
+            await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
+          } catch (err) {
+            addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
+          }
+        }
+        pendingIceCandidatesRef.current = [];
+      }
+      
+      // Создаем ответ
+      const answer = await peerRef.current.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      await peerRef.current.setLocalDescription(answer);
+      addDebugInfo('Local description (answer) установлен');
+      
+      // Отправляем ответ клиенту
+      socketRef.current.emit('sos-answer', { answer, id });
+      addDebugInfo('Answer отправлен клиенту после переподключения');
+      
+      setConnectionStatus('Ожидание соединения после переподключения...');
+    } catch (err) {
+      addDebugInfo(`Ошибка при переподключении: ${err.message}`);
+      throw err;
+    }
+  };
+  
+  // Настройка обработчиков для peer connection
+  const setupPeerHandlers = () => {
+    if (!peerRef.current) return;
+    
+    peerRef.current.ontrack = (event) => {
+      // Проверяем, не обрабатывали ли мы уже этот трек
+      const trackId = event.track.id;
+      if (processedTracksRef.current.has(trackId)) {
+        // Трек уже был обработан, пропускаем
+        addDebugInfo(`Пропускаем уже обработанный трек: ${event.track.kind}, id: ${trackId}`);
+        return;
+      }
+      
+      // Добавляем трек в список обработанных
+      processedTracksRef.current.add(trackId);
+      
+      addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
+      
+      if (event.track.kind === 'video') {
+        setHasVideo(true);
+        addDebugInfo('Видеотрек получен');
+      } else if (event.track.kind === 'audio') {
+        setHasAudio(true);
+        addDebugInfo('Аудиотрек получен');
+      }
+      
+      // Получаем медиапоток
+      const stream = event.streams[0];
+      
+      if (!stream) {
+        addDebugInfo('Ошибка: поток отсутствует в событии track');
+        return;
+      }
+      
+      if (videoRef.current) {
+        // Устанавливаем поток в видеоэлемент
+        if (!videoRef.current.srcObject) {
+          videoRef.current.srcObject = stream;
+          addDebugInfo('Установлен новый видеопоток');
+        } else {
+          // Если поток уже есть, проверяем, тот же ли это поток
+          const currentStream = videoRef.current.srcObject;
+          if (currentStream.id !== stream.id) {
+            // Если это новый поток, заменяем существующий
+            videoRef.current.srcObject = stream;
+            addDebugInfo('Заменен существующий видеопоток');
+          } else {
+            addDebugInfo('Поток уже установлен, пропускаем');
+          }
+        }
+        
+        // Настраиваем обработчики для видеоэлемента
+        videoRef.current.onloadedmetadata = () => {
+          addDebugInfo('Метаданные видео загружены');
+          
+          // Запускаем воспроизведение
+          try {
+            videoRef.current.play()
+              .then(() => {
+                addDebugInfo('Воспроизведение видео успешно запущено');
+                setAutoplayBlocked(false);
+              })
+              .catch(err => {
+                addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
+                
+                // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
+                if (err.name === 'NotAllowedError') {
+                  addDebugInfo('Автовоспроизведение заблокировано браузером');
+                  setAutoplayBlocked(true);
+                }
+              });
+          } catch (err) {
+            addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
+          }
+        };
+        
+        // Обработка ошибок
+        videoRef.current.onerror = (e) => {
+          addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
+        };
+      } else {
+        addDebugInfo('Ошибка: videoRef.current отсутствует');
+      }
+      
+      // Отслеживаем окончание трека
+      event.track.onended = () => {
+        addDebugInfo(`Трек ${event.track.kind} завершен`);
+        // Удаляем трек из списка обработанных
+        processedTracksRef.current.delete(trackId);
+        
+        // Проверяем, остались ли еще треки
+        if (event.track.kind === 'video') {
+          setHasVideo(false);
+        } else if (event.track.kind === 'audio') {
+          setHasAudio(false);
+        }
+      };
+    };
+    
+    peerRef.current.oniceconnectionstatechange = () => {
+      const state = peerRef.current.iceConnectionState;
+      addDebugInfo(`ICE состояние изменилось: ${state}`);
+      setConnectionStatus(`ICE состояние: ${state}`);
+      
+      if (state === 'connected' || state === 'completed') {
+        setConnectionStatus('Соединение установлено');
+      } else if (state === 'failed' || state === 'disconnected') {
+        setError('Соединение потеряно. Пытаемся восстановить...');
+        // Пробуем переподключиться
+        setTimeout(() => {
+          if (peerRef.current) {
+            peerRef.current.restartIce();
+            addDebugInfo('Попытка восстановления ICE соединения');
+          }
+        }, 1000);
+      }
+    };
+    
+    peerRef.current.onsignalingstatechange = () => {
+      addDebugInfo(`Signaling состояние: ${peerRef.current.signalingState}`);
+    };
+    
+    peerRef.current.onconnectionstatechange = () => {
+      addDebugInfo(`Connection состояние: ${peerRef.current.connectionState}`);
+    };
+    
+    peerRef.current.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        addDebugInfo('Отправка ICE кандидата клиенту');
+        socketRef.current.emit('ice-candidate', { candidate, id });
+      }
+    };
   };
 
   // Очистка отладочной информации
@@ -837,17 +1130,30 @@ const CallDetails = () => {
     if (videoRef.current) {
       addDebugInfo('Попытка ручного запуска воспроизведения');
       
-      const playPromise = videoRef.current.play();
-      
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            addDebugInfo('Воспроизведение успешно запущено вручную');
-            setAutoplayBlocked(false);
-          })
-          .catch(err => {
-            addDebugInfo(`Ошибка при ручном запуске воспроизведения: ${err.message}`);
-          });
+      try {
+        // Проверяем, есть ли видеопоток
+        if (!videoRef.current.srcObject) {
+          addDebugInfo('Ошибка: нет видеопотока для воспроизведения');
+          setError('Нет видеопотока. Попробуйте переподключиться.');
+          return;
+        }
+        
+        const playPromise = videoRef.current.play();
+        
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              addDebugInfo('Воспроизведение успешно запущено вручную');
+              setAutoplayBlocked(false);
+            })
+            .catch(err => {
+              addDebugInfo(`Ошибка при ручном запуске воспроизведения: ${err.message}`);
+              setError(`Не удалось запустить видео: ${err.message}`);
+            });
+        }
+      } catch (err) {
+        addDebugInfo(`Ошибка при запуске видео: ${err.message}`);
+        setError(`Ошибка воспроизведения: ${err.message}`);
       }
     }
   };

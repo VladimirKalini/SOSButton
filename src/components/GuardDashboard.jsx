@@ -62,14 +62,25 @@ const GuardDashboard = () => {
       if (activeTab === 'history') {
         try {
           setLoading(true);
-          const response = await axios.get('/api/calls/history', {
+          setError(''); // Сбрасываем ошибку перед новым запросом
+          
+          // Добавляем случайный параметр для избежания кэширования
+          const timestamp = new Date().getTime();
+          const response = await axios.get(`/api/calls/history?_t=${timestamp}`, {
             headers: { Authorization: `Bearer ${token}` }
           });
-          setCallHistory(response.data);
-          setError('');
+          
+          if (response.data && Array.isArray(response.data)) {
+            setCallHistory(response.data);
+            addDebugInfo(`Загружено ${response.data.length} записей истории вызовов`);
+          } else {
+            setCallHistory([]);
+            addDebugInfo('История вызовов пуста или имеет неверный формат');
+          }
         } catch (err) {
-          setError('Не удалось загрузить историю вызовов');
           console.error('Ошибка загрузки истории вызовов:', err);
+          setError('Не удалось загрузить историю вызовов');
+          addDebugInfo(`Ошибка загрузки истории: ${err.response?.status || 'неизвестная ошибка'}`);
         } finally {
           setLoading(false);
         }
@@ -78,6 +89,11 @@ const GuardDashboard = () => {
 
     fetchCallHistory();
   }, [token, activeTab]);
+
+  // Функция для отладочных сообщений
+  const addDebugInfo = (message) => {
+    console.log(`[GuardDashboard] ${message}`);
+  };
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -125,6 +141,49 @@ const GuardDashboard = () => {
 
   const handleLogout = () => {
     // Implement the logout logic here
+  };
+
+  // Функция для принудительного обновления истории вызовов
+  const refreshHistory = () => {
+    if (activeTab === 'history') {
+      addDebugInfo('Принудительное обновление истории вызовов');
+      setLoading(true);
+      setError('');
+      
+      const timestamp = new Date().getTime();
+      axios.get(`/api/calls/history?_t=${timestamp}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(response => {
+          if (response.data && Array.isArray(response.data)) {
+            setCallHistory(response.data);
+            addDebugInfo(`Обновлено ${response.data.length} записей истории вызовов`);
+            
+            // Показываем уведомление об успешном обновлении
+            setNotification({
+              show: true,
+              message: 'История вызовов успешно обновлена',
+              type: 'success'
+            });
+            
+            // Скрываем уведомление через 3 секунды
+            setTimeout(() => {
+              setNotification({ show: false, message: '', type: '' });
+            }, 3000);
+          } else {
+            setCallHistory([]);
+            addDebugInfo('История вызовов пуста или имеет неверный формат');
+          }
+        })
+        .catch(err => {
+          console.error('Ошибка обновления истории вызовов:', err);
+          setError('Не удалось обновить историю вызовов');
+          addDebugInfo(`Ошибка обновления истории: ${err.response?.status || 'неизвестная ошибка'}`);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
   };
 
   return (
@@ -430,9 +489,60 @@ const GuardDashboard = () => {
                 <path d="M3 5.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 8a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 8zm0 2.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5z"/>
               </svg>
               <p style={{ fontSize: '1.1rem', fontWeight: '500' }}>История вызовов пуста</p>
+              <button 
+                onClick={refreshHistory}
+                style={{ 
+                  padding: '0.75rem 1.5rem', 
+                  backgroundColor: '#007bff', 
+                  color: 'white', 
+                  border: 'none',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  boxShadow: '0 2px 4px rgba(0, 123, 255, 0.2)',
+                  transition: 'all 0.2s ease',
+                  marginTop: '1rem'
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+                  <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                  <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                </svg>
+                Обновить историю
+              </button>
             </div>
           ) : (
             <div>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'flex-end', 
+                marginBottom: '1rem' 
+              }}>
+                <button 
+                  onClick={refreshHistory}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#007bff', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.5rem',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    boxShadow: '0 2px 4px rgba(0, 123, 255, 0.2)',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+                    <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                  </svg>
+                  Обновить
+                </button>
+              </div>
               <div style={{ display: 'grid', gap: '1.5rem' }}>
                 {callHistory.map(call => (
                   <div 

@@ -103,16 +103,20 @@ router.delete('/:id/cancel', roleMiddleware('guard'), async (req, res) => {
 // История вызовов (только охрана) с пагинацией
 router.get('/history', roleMiddleware('guard'), async (req, res) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
+    // Удаляем пагинацию для получения всех вызовов сразу
     const calls = await Sos.find()
       .sort('-createdAt')
-      .skip((page - 1) * limit)
-      .limit(limit);
+      .limit(100); // Ограничиваем максимальное количество вызовов для производительности
+      
+    // Добавляем заголовки для предотвращения кэширования
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    
     res.json(calls);
   } catch (err) {
     console.error('Ошибка при получении истории вызовов:', err);
-    res.status(500).json({ message: 'Ошибка сервера' });
+    res.status(500).json({ message: 'Ошибка сервера при получении истории вызовов', error: err.message });
   }
 });
 
