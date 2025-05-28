@@ -167,60 +167,67 @@ const CallDetails = () => {
       try {
         addDebugInfo('Обработка offer от клиента');
         
-        if (!call.offer) {
+        if (!call || !call.offer) {
           addDebugInfo('Offer отсутствует в данных вызова');
           setError('Не удалось установить видеосвязь: отсутствует offer');
           return;
         }
         
         // Проверяем, что offer имеет правильный формат
-        if (!call.offer || !call.offer.type || !call.offer.sdp) {
+        if (!call.offer.type || !call.offer.sdp) {
           addDebugInfo('Offer имеет некорректный формат');
           setError('Не удалось установить видеосвязь: некорректный формат offer');
           return;
         }
         
-        // Устанавливаем удаленное описание (offer)
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
-        addDebugInfo('Remote description установлен');
-        
-        // Добавляем сохраненные ICE кандидаты, если они есть
-        if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
-          addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
-          for (const candidate of pendingIceCandidatesRef.current) {
-            try {
-              await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-              addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
-            } catch (err) {
-              addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
-            }
-          }
-          pendingIceCandidatesRef.current = [];
+        // Проверяем, что peerRef.current существует
+        if (!peerRef.current) {
+          addDebugInfo('Ошибка: peerRef.current отсутствует');
+          setError('Не удалось установить видеосвязь: соединение не инициализировано');
+          return;
         }
         
-        // Создаем ответ
-        const answer = await peerRef.current.createAnswer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true
-        });
-        
-        // Устанавливаем локальное описание (answer)
-        await peerRef.current.setLocalDescription(answer);
-        addDebugInfo('Local description установлен');
-        
-        // Отправляем ответ клиенту
-        socketRef.current.emit('sos-answer', { answer, id });
-        addDebugInfo('Ответ отправлен клиенту');
-        
-        setConnectionStatus('Соединение устанавливается...');
+        try {
+          // Устанавливаем удаленное описание (offer)
+          await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
+          addDebugInfo('Remote description установлен');
+          
+          // Добавляем сохраненные ICE кандидаты, если они есть
+          if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
+            addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
+            for (const candidate of pendingIceCandidatesRef.current) {
+              try {
+                await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
+              } catch (err) {
+                addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
+              }
+            }
+            pendingIceCandidatesRef.current = [];
+          }
+          
+          // Создаем ответ
+          const answer = await peerRef.current.createAnswer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+          });
+          
+          // Устанавливаем локальное описание (answer)
+          await peerRef.current.setLocalDescription(answer);
+          addDebugInfo('Local description установлен');
+          
+          // Отправляем ответ клиенту
+          socketRef.current.emit('sos-answer', { answer, id });
+          addDebugInfo('Ответ отправлен клиенту');
+          
+          setConnectionStatus('Соединение устанавливается...');
+        } catch (err) {
+          addDebugInfo(`Ошибка при обработке offer: ${err.message}`);
+          setError(`Ошибка при установке видеосвязи: ${err.message}`);
+        }
       } catch (err) {
-        addDebugInfo(`Ошибка при обработке offer: ${err.message}`);
+        addDebugInfo(`Общая ошибка при обработке offer: ${err.message}`);
         setError(`Ошибка при установке видеосвязи: ${err.message}`);
-        
-        // Пробуем переподключиться при ошибке
-        setTimeout(() => {
-          handleReconnect();
-        }, 2000);
       }
     };
 
@@ -585,18 +592,7 @@ const CallDetails = () => {
     
     peerRef.current.ontrack = (event) => {
       try {
-        // Проверяем, не обрабатывали ли мы уже этот трек
-        const trackId = event.track.id;
-        if (processedTracksRef.current.has(trackId)) {
-          // Трек уже был обработан, пропускаем
-          addDebugInfo(`Пропускаем уже обработанный трек: ${event.track.kind}, id: ${trackId}`);
-          return;
-        }
-        
-        // Добавляем трек в список обработанных
-        processedTracksRef.current.add(trackId);
-        
-        addDebugInfo(`Получен медиа-трек: ${event.track.kind}, id: ${trackId}`);
+        addDebugInfo(`Получен медиа-трек: ${event.track.kind}`);
         
         if (event.track.kind === 'video') {
           setHasVideo(true);
@@ -606,47 +602,20 @@ const CallDetails = () => {
           addDebugInfo('Аудиотрек получен');
         }
         
-        // Получаем медиапоток
-        const stream = event.streams[0];
+        // Получаем медиапоток или создаем новый, если его нет
+        let stream = event.streams[0];
         
         if (!stream) {
-          addDebugInfo('Ошибка: поток отсутствует в событии track');
-          
-          // Создаем новый поток, если отсутствует
-          const newStream = new MediaStream();
-          newStream.addTrack(event.track);
-          
-          if (videoRef.current && !videoRef.current.srcObject) {
-            videoRef.current.srcObject = newStream;
-            addDebugInfo('Создан новый поток с добавленным треком');
-          } else if (videoRef.current) {
-            // Добавляем трек к существующему потоку
-            const currentStream = videoRef.current.srcObject;
-            if (currentStream instanceof MediaStream) {
-              currentStream.addTrack(event.track);
-              addDebugInfo('Трек добавлен к существующему потоку');
-            }
-          }
-          return;
+          addDebugInfo('Поток отсутствует в событии track, создаем новый');
+          stream = new MediaStream();
+          stream.addTrack(event.track);
         }
         
         if (videoRef.current) {
           try {
             // Устанавливаем поток в видеоэлемент
-            if (!videoRef.current.srcObject) {
-              videoRef.current.srcObject = stream;
-              addDebugInfo('Установлен новый видеопоток');
-            } else {
-              // Если поток уже есть, проверяем, тот же ли это поток
-              const currentStream = videoRef.current.srcObject;
-              if (currentStream.id !== stream.id) {
-                // Если это новый поток, заменяем существующий
-                videoRef.current.srcObject = stream;
-                addDebugInfo('Заменен существующий видеопоток');
-              } else {
-                addDebugInfo('Поток уже установлен, пропускаем');
-              }
-            }
+            videoRef.current.srcObject = stream;
+            addDebugInfo('Поток установлен в видеоэлемент');
             
             // Настраиваем обработчики для видеоэлемента
             videoRef.current.onloadedmetadata = () => {
@@ -676,30 +645,11 @@ const CallDetails = () => {
                     if (err.name === 'NotAllowedError') {
                       addDebugInfo('Автовоспроизведение заблокировано браузером');
                       setAutoplayBlocked(true);
-                    } else {
-                      // Пробуем переподключиться при других ошибках
-                      addDebugInfo('Ошибка воспроизведения, попытка переподключения через 2 секунды...');
-                      setTimeout(() => {
-                        handleReconnect();
-                      }, 2000);
                     }
                   });
               } catch (err) {
                 addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
-                // Пробуем переподключиться при ошибке
-                setTimeout(() => {
-                  handleReconnect();
-                }, 2000);
               }
-            };
-            
-            // Обработка ошибок
-            videoRef.current.onerror = (e) => {
-              addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
-              // Пробуем переподключиться при ошибке видео
-              setTimeout(() => {
-                handleReconnect();
-              }, 2000);
             };
           } catch (err) {
             addDebugInfo(`Ошибка при настройке видеоэлемента: ${err.message}`);
@@ -711,10 +661,7 @@ const CallDetails = () => {
         // Отслеживаем окончание трека
         event.track.onended = () => {
           addDebugInfo(`Трек ${event.track.kind} завершен`);
-          // Удаляем трек из списка обработанных
-          processedTracksRef.current.delete(trackId);
           
-          // Проверяем, остались ли еще треки
           if (event.track.kind === 'video') {
             setHasVideo(false);
           } else if (event.track.kind === 'audio') {
@@ -745,11 +692,8 @@ const CallDetails = () => {
           setError('Соединение потеряно. Пытаемся восстановить...');
           // Пробуем переподключиться
           setTimeout(() => {
-            if (peerRef.current) {
-              peerRef.current.restartIce();
-              addDebugInfo('Попытка восстановления ICE соединения');
-            }
-          }, 1000);
+            handleReconnect();
+          }, 2000);
         }
       } catch (err) {
         addDebugInfo(`Ошибка в обработчике oniceconnectionstatechange: ${err.message}`);
@@ -934,106 +878,87 @@ const CallDetails = () => {
     try {
       addDebugInfo('Получен запрос на переподключение с новым offer');
       
-      // Проверяем состояние соединения
+      // Всегда пересоздаем соединение при получении нового offer
+      addDebugInfo('Пересоздаем WebRTC соединение');
+      
+      // Закрываем текущее соединение, если оно существует
       if (peerRef.current) {
-        const currentState = peerRef.current.signalingState;
-        addDebugInfo(`Текущее состояние сигнализации: ${currentState}`);
-        
-        // Если мы в состоянии stable, нужно сбросить соединение перед установкой нового offer
-        if (currentState === 'stable') {
-          addDebugInfo('Сброс соединения в состоянии stable перед установкой нового offer');
-          
-          // Закрываем текущее соединение и создаем новое
+        try {
+          peerRef.current.ontrack = null;
+          peerRef.current.onicecandidate = null;
+          peerRef.current.oniceconnectionstatechange = null;
+          peerRef.current.onsignalingstatechange = null;
+          peerRef.current.onconnectionstatechange = null;
           peerRef.current.close();
-          
-          peerRef.current = new RTCPeerConnection({
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' },
-              { 
-                urls: 'turn:numb.viagenie.ca',
-                username: 'webrtc@live.com',
-                credential: 'muazkh'
-              },
-              {
-                urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-                username: 'webrtc',
-                credential: 'webrtc'
-              }
-            ],
-            iceCandidatePoolSize: 10,
-            bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require',
-            iceTransportPolicy: 'all'
-          });
-          
-          // Настраиваем обработчики для WebRTC
-          setupPeerHandlers();
+          addDebugInfo('Существующее WebRTC соединение закрыто');
+        } catch (err) {
+          addDebugInfo(`Ошибка при закрытии WebRTC соединения: ${err.message}`);
         }
-        
-        // Устанавливаем удаленное описание (offer)
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-        addDebugInfo('Remote description (offer) установлен при переподключении');
-        
-        // Создаем ответ
-        const answer = await peerRef.current.createAnswer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true
-        });
-        
-        // Устанавливаем локальное описание (answer)
-        await peerRef.current.setLocalDescription(answer);
-        addDebugInfo('Local description (answer) установлен при переподключении');
-        
-        // Отправляем ответ клиенту
-        socketRef.current.emit('sos-answer', { answer, id });
-        addDebugInfo('Answer отправлен клиенту при переподключении');
-      } else {
-        addDebugInfo('Ошибка: peerRef.current отсутствует при получении запроса на переподключение');
-        
-        // Создаем новое WebRTC соединение
-        peerRef.current = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun1.l.google.com:19302' },
-            { 
-              urls: 'turn:numb.viagenie.ca',
-              username: 'webrtc@live.com',
-              credential: 'muazkh'
-            },
-            {
-              urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-              username: 'webrtc',
-              credential: 'webrtc'
-            }
-          ],
-          iceCandidatePoolSize: 10,
-          bundlePolicy: 'max-bundle',
-          rtcpMuxPolicy: 'require',
-          iceTransportPolicy: 'all'
-        });
-        
-        // Настраиваем обработчики для WebRTC
-        setupPeerHandlers();
-        
-        // Устанавливаем удаленное описание (offer)
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-        addDebugInfo('Remote description (offer) установлен при переподключении');
-        
-        // Создаем ответ
-        const answer = await peerRef.current.createAnswer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true
-        });
-        
-        // Устанавливаем локальное описание (answer)
-        await peerRef.current.setLocalDescription(answer);
-        addDebugInfo('Local description (answer) установлен при переподключении');
-        
-        // Отправляем ответ клиенту
-        socketRef.current.emit('sos-answer', { answer, id });
-        addDebugInfo('Answer отправлен клиенту при переподключении');
       }
+      
+      // Очищаем видеоэлемент
+      if (videoRef.current && videoRef.current.srcObject) {
+        try {
+          const tracks = videoRef.current.srcObject.getTracks();
+          tracks.forEach(track => {
+            track.stop();
+            addDebugInfo(`Трек ${track.kind} остановлен`);
+          });
+          videoRef.current.srcObject = null;
+          addDebugInfo('Видеоэлемент очищен');
+        } catch (err) {
+          addDebugInfo(`Ошибка при очистке видеоэлемента: ${err.message}`);
+        }
+      }
+      
+      // Очищаем списки
+      processedTracksRef.current.clear();
+      pendingIceCandidatesRef.current = [];
+      
+      // Создаем новое WebRTC соединение
+      peerRef.current = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        iceTransportPolicy: 'all'
+      });
+      
+      // Настраиваем обработчики для WebRTC
+      setupPeerHandlers();
+      
+      // Проверяем, что offer имеет правильный формат
+      if (!offer || !offer.type || !offer.sdp) {
+        addDebugInfo('Ошибка: полученный offer имеет некорректный формат');
+        setError('Некорректный формат offer от клиента');
+        return;
+      }
+      
+      // Устанавливаем удаленное описание (offer)
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      addDebugInfo('Remote description установлен при переподключении');
+      
+      // Создаем ответ
+      const answer = await peerRef.current.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
+      // Устанавливаем локальное описание (answer)
+      await peerRef.current.setLocalDescription(answer);
+      addDebugInfo('Local description установлен при переподключении');
+      
+      // Отправляем ответ клиенту
+      socketRef.current.emit('sos-answer', { answer, id });
+      addDebugInfo('Answer отправлен клиенту при переподключении');
+      
+      setConnectionStatus('Ожидание соединения после переподключения...');
     } catch (err) {
       addDebugInfo(`Ошибка при обработке запроса на переподключение: ${err.message}`);
       setError('Не удалось переподключиться: ' + err.message);
@@ -1269,27 +1194,187 @@ const CallDetails = () => {
                     `}</style>
                   </div>
                 )}
+                
+                {autoplayBlocked && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    color: 'white',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    flexDirection: 'column',
+                    padding: '1rem'
+                  }}>
+                    <div style={{ marginBottom: '1rem' }}>Автовоспроизведение заблокировано браузером</div>
+                    <button 
+                      onClick={handleManualPlay}
+                      style={{ 
+                        padding: '0.5rem 1rem', 
+                        backgroundColor: '#007bff', 
+                        color: 'white', 
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Запустить видео
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-          ) : (
-            <div>
-              {recordedVideos.map(video => (
+              
+              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between' }}>
                 <button 
-                  key={video.id}
-                  onClick={() => handleSelectVideo(video)}
+                  onClick={toggleDebugModal}
                   style={{ 
                     padding: '0.5rem 1rem', 
-                    backgroundColor: selectedVideo === video ? '#007bff' : '#f8f9fa',
-                    color: selectedVideo === video ? 'white' : '#6c757d',
+                    backgroundColor: '#6c757d', 
+                    color: 'white', 
                     border: 'none',
                     borderRadius: '0.25rem',
                     cursor: 'pointer',
-                    marginBottom: '0.5rem'
+                    fontSize: '0.9rem'
                   }}
                 >
-                  {video.title}
+                  {showFullDebug ? 'Скрыть отладку' : 'Показать отладку'}
                 </button>
-              ))}
+                
+                <button 
+                  onClick={clearDebugInfo}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: '#dc3545', 
+                    color: 'white', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Очистить логи
+                </button>
+              </div>
+              
+              {/* Добавляем кнопку для принудительного обновления соединения */}
+              <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                <button 
+                  onClick={() => {
+                    addDebugInfo('Принудительное обновление соединения...');
+                    
+                    // Закрываем текущее соединение
+                    if (peerRef.current) {
+                      peerRef.current.close();
+                      peerRef.current = null;
+                      addDebugInfo('Текущее соединение закрыто');
+                    }
+                    
+                    // Очищаем видеоэлемент
+                    if (videoRef.current && videoRef.current.srcObject) {
+                      const tracks = videoRef.current.srcObject.getTracks();
+                      tracks.forEach(track => track.stop());
+                      videoRef.current.srcObject = null;
+                      addDebugInfo('Видеоэлемент очищен');
+                    }
+                    
+                    // Полностью перезагружаем данные вызова и переподключаемся
+                    axios.get(`/api/calls/${id}`, {
+                      headers: { Authorization: `Bearer ${token}` }
+                    }).then(response => {
+                      setCall(response.data);
+                      addDebugInfo('Данные вызова обновлены');
+                      
+                      // Инициируем переподключение через небольшую задержку
+                      setTimeout(() => {
+                        handleReconnect();
+                      }, 500);
+                    }).catch(err => {
+                      addDebugInfo(`Ошибка при обновлении данных: ${err.message}`);
+                    });
+                  }}
+                  style={{ 
+                    padding: '0.75rem 1.5rem', 
+                    backgroundColor: '#ffc107', 
+                    color: '#212529', 
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    width: '100%'
+                  }}
+                >
+                  Принудительно обновить соединение
+                </button>
+              </div>
+              
+              {showFullDebug && (
+                <div style={{ 
+                  marginTop: '1rem',
+                  padding: '1rem',
+                  backgroundColor: '#212529',
+                  color: '#f8f9fa',
+                  borderRadius: '0.25rem',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                  fontFamily: 'monospace',
+                  fontSize: '0.9rem',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all'
+                }}>
+                  {debugInfo || 'Нет отладочной информации'}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              {recordedVideos.length > 0 ? (
+                <div>
+                  <div style={{ marginBottom: '1rem' }}>
+                    {recordedVideos.map(video => (
+                      <button 
+                        key={video.id}
+                        onClick={() => handleSelectVideo(video)}
+                        style={{ 
+                          padding: '0.5rem 1rem', 
+                          backgroundColor: selectedVideo === video ? '#007bff' : '#f8f9fa',
+                          color: selectedVideo === video ? 'white' : '#6c757d',
+                          border: '1px solid #dee2e6',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          marginRight: '0.5rem',
+                          marginBottom: '0.5rem'
+                        }}
+                      >
+                        {video.title || new Date(video.createdAt).toLocaleString()}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  {selectedVideo && (
+                    <div>
+                      <video 
+                        src={`/api/calls/${id}/video/${selectedVideo.id}`}
+                        controls
+                        style={{ width: '100%', borderRadius: '0.25rem' }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'center', 
+                  alignItems: 'center', 
+                  height: '200px',
+                  color: '#6c757d'
+                }}>
+                  Нет записанных видео
+                </div>
+              )}
             </div>
           )}
         </div>

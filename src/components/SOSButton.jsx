@@ -51,131 +51,96 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         console.log('Получен ответ SOS:', answer);
         addDebugMessage('Получен ответ от охраны');
         
-        if (peerRef.current) {
-          // Проверяем текущее состояние соединения
-          const currentState = peerRef.current.signalingState;
-          setSignalingState(currentState);
-          console.log('Текущее состояние сигнализации:', currentState);
-          
-          try {
-            // Проверяем, не находимся ли мы в состоянии stable
-            if (currentState === 'stable') {
-              console.log('Сброс соединения перед установкой remoteDescription, так как состояние stable');
-              // Создаем новый offer для изменения состояния
-              const newOffer = await peerRef.current.createOffer({
-                offerToReceiveAudio: true,
-                offerToReceiveVideo: true
-              });
-              await peerRef.current.setLocalDescription(newOffer);
-              console.log('Создан новый offer для изменения состояния');
-              
-              // Отправляем новый offer на сервер
-              socketRef.current.emit('sos-offer', { 
-                offer: newOffer, 
-                latitude: location?.latitude, 
-                longitude: location?.longitude, 
-                phone: userPhone,
-                reconnect: true,
-                sosId: sosId
-              });
-              
-              console.log('Новый offer отправлен, пропускаем текущий answer');
-              return; // Пропускаем текущий answer, так как отправили новый offer
-            }
-            
-            // Проверяем, что answer имеет правильный формат
-            if (!answer || !answer.type || !answer.sdp) {
-              console.error('Получен некорректный answer:', answer);
-              addDebugMessage('Ошибка: некорректный формат ответа от сервера');
-              
-              // Пробуем переподключиться при ошибке
-              setTimeout(() => {
-                reinitializeConnection();
-              }, 1000);
-              return;
-            }
-            
-            // Устанавливаем remoteDescription
-            await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-            console.log('Remote description установлен успешно');
-            addDebugMessage('Соединение установлено');
-            
-            // Отправляем сохраненные ICE кандидаты после установки remoteDescription
-            if (sosId) {
-              iceCandidates.forEach(candidate => {
-                socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-                console.log('Отправлен сохраненный ICE кандидат');
-              });
-              setIceCandidates([]);
-            }
-            
-            // Проверяем, изменилось ли состояние после установки remoteDescription
-            setTimeout(() => {
-              if (peerRef.current) {
-                const newState = peerRef.current.signalingState;
-                console.log('Состояние после установки remoteDescription:', newState);
-                
-                if (newState === 'have-local-offer' || newState === 'stable' && !peerRef.current.connectionState === 'connected') {
-                  console.log('Соединение в неправильном состоянии после установки remoteDescription');
-                  addDebugMessage('Проблема с состоянием соединения, пробуем переподключиться');
-                  
-                  // Принудительно переподключаемся
-                  setTimeout(() => {
-                    reinitializeConnection();
-                  }, 1000);
-                }
-              }
-            }, 2000);
-          } catch (error) {
-            console.error('Ошибка при установке remoteDescription:', error);
-            addDebugMessage(`Ошибка при установке соединения: ${error.message}`);
-            
-            // Пробуем переподключиться при ошибке
-            setTimeout(() => {
-              reinitializeConnection();
-            }, 1000);
-          }
-        } else {
-          console.error('Не удалось установить remoteDescription: peer не инициализирован');
+        // Проверяем, что peerRef.current существует
+        if (!peerRef.current) {
+          console.error('Ошибка: peerRef.current отсутствует при получении ответа');
           addDebugMessage('Ошибка: соединение не инициализировано');
           
           // Пробуем переподключиться
-          if (reconnectAttempts < maxReconnectAttempts) {
-            addDebugMessage('Попытка переподключения...');
-            setTimeout(() => {
-              reinitializeConnection();
-              setReconnectAttempts(prev => prev + 1);
-            }, 2000);
+          setTimeout(() => {
+            reinitializeConnection();
+          }, 1000);
+          return;
+        }
+        
+        // Проверяем, что answer имеет правильный формат
+        if (!answer || !answer.type || !answer.sdp) {
+          console.error('Получен некорректный answer:', answer);
+          addDebugMessage('Ошибка: некорректный формат ответа от сервера');
+          
+          // Пробуем переподключиться при ошибке
+          setTimeout(() => {
+            reinitializeConnection();
+          }, 1000);
+          return;
+        }
+        
+        try {
+          // Устанавливаем remoteDescription
+          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+          console.log('Remote description установлен успешно');
+          addDebugMessage('Соединение установлено');
+          
+          // Отправляем сохраненные ICE кандидаты после установки remoteDescription
+          if (sosId && iceCandidates.length > 0) {
+            console.log(`Отправляем ${iceCandidates.length} сохраненных ICE кандидатов`);
+            iceCandidates.forEach(candidate => {
+              socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+              console.log('Отправлен сохраненный ICE кандидат');
+            });
+            setIceCandidates([]);
           }
+        } catch (error) {
+          console.error('Ошибка при установке remoteDescription:', error);
+          addDebugMessage(`Ошибка при установке соединения: ${error.message}`);
+          
+          // Пробуем переподключиться при ошибке
+          setTimeout(() => {
+            reinitializeConnection();
+          }, 1000);
         }
       } catch (e) {
         console.error('Ошибка при установке ответа:', e);
         addDebugMessage(`Ошибка: ${e.message}`);
         
         // Если произошла ошибка, пробуем переинициализировать соединение
-        if (reconnectAttempts < maxReconnectAttempts) {
-          addDebugMessage('Ошибка соединения. Попытка переподключения...');
-          setTimeout(() => {
-            reinitializeConnection();
-            setReconnectAttempts(prev => prev + 1);
-          }, 2000);
-        }
+        setTimeout(() => {
+          reinitializeConnection();
+        }, 2000);
       } 
     });
     
     socketRef.current.on('ice-candidate', async (candidate) => {
       try {
         console.log('Получен ICE кандидат:', candidate);
-        if (peerRef.current && peerRef.current.remoteDescription) {
+        
+        // Проверяем, что peerRef.current существует
+        if (!peerRef.current) {
+          console.warn('Не удалось добавить ICE кандидата: peer не инициализирован');
+          // Сохраняем кандидата для последующего добавления
+          setIceCandidates(prev => [...prev, candidate]);
+          return;
+        }
+        
+        // Проверяем, что remoteDescription установлен
+        if (!peerRef.current.remoteDescription) {
+          console.warn('Не удалось добавить ICE кандидата: нет remoteDescription');
+          // Сохраняем кандидата для последующего добавления
+          setIceCandidates(prev => [...prev, candidate]);
+          return;
+        }
+        
+        // Добавляем ICE кандидата
+        try {
           await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
           console.log('ICE кандидат добавлен успешно');
-        } else {
-          console.warn('Не удалось добавить ICE кандидата: peer не инициализирован или нет remoteDescription');
-          // Сохраняем кандидата для последующего добавления
+        } catch (err) {
+          console.error('Ошибка при добавлении ICE кандидата:', err);
+          // Сохраняем кандидата для повторной попытки
           setIceCandidates(prev => [...prev, candidate]);
         }
       } catch (err) {
-        console.error('Ошибка при добавлении ICE кандидата:', err);
+        console.error('Ошибка при обработке ICE кандидата:', err);
       }
     });
     
@@ -348,10 +313,16 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   // Инициализация WebRTC соединения
   const initializeWebRTC = async () => {
     try {
+      // Закрываем предыдущее соединение, если оно существует
       if (peerRef.current) {
         peerRef.current.close();
+        peerRef.current = null;
       }
       
+      // Очищаем список ICE кандидатов
+      setIceCandidates([]);
+      
+      // Создаем новое соединение с более простой конфигурацией
       peerRef.current = new RTCPeerConnection({ 
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -360,67 +331,51 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' }
         ],
-        iceTransportPolicy: 'all',
         iceCandidatePoolSize: 10
       });
       
+      // Обработка ICE кандидатов
       peerRef.current.onicecandidate = ({ candidate }) => {
         if (candidate) {
-          console.log('Сгенерирован ICE кандидат:', candidate);
+          console.log('Сгенерирован ICE кандидат');
           
           if (sosId) {
+            // Если у нас есть ID комнаты, отправляем кандидата напрямую
             socketRef.current.emit('ice-candidate', { candidate, id: sosId });
             console.log('ICE кандидат отправлен напрямую');
           } else {
+            // Иначе сохраняем для последующей отправки
             setIceCandidates(prev => [...prev, candidate]);
             console.log('ICE кандидат сохранен для последующей отправки');
           }
         }
       };
       
+      // Обработка изменения состояния ICE соединения
       peerRef.current.oniceconnectionstatechange = () => {
         const state = peerRef.current.iceConnectionState;
         console.log('ICE состояние:', state);
         
         if (state === 'connected' || state === 'completed') {
           addDebugMessage('Соединение установлено');
-          setReconnectAttempts(0);
         } else if (state === 'failed') {
           addDebugMessage('Соединение не удалось');
-          if (reconnectAttempts < maxReconnectAttempts) {
-            addDebugMessage('Попытка восстановления соединения...');
-            peerRef.current.restartIce();
-            setReconnectAttempts(prev => prev + 1);
-          }
-        } else if (state === 'disconnected') {
-          addDebugMessage('Соединение прервано');
-        }
-      };
-      
-      peerRef.current.onsignalingstatechange = () => {
-        const state = peerRef.current.signalingState;
-        console.log('Signaling состояние:', state);
-        setSignalingState(state);
-      };
-      
-      peerRef.current.onconnectionstatechange = () => {
-        console.log('Connection состояние:', peerRef.current.connectionState);
-        if (peerRef.current.connectionState === 'connected') {
-          addDebugMessage('Соединение установлено');
-        } else if (peerRef.current.connectionState === 'failed') {
-          addDebugMessage('Соединение не удалось');
+          // Попытка восстановления соединения
+          setTimeout(() => {
+            reinitializeConnection();
+          }, 2000);
         }
       };
       
       // Добавляем все треки в peer connection
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => {
-          const sender = peerRef.current.addTrack(track, streamRef.current);
-          console.log(`Трек добавлен: ${track.kind}, enabled: ${track.enabled}`);
-        });
-      } else {
+      if (!streamRef.current) {
         throw new Error('Медиапоток не инициализирован');
       }
+      
+      streamRef.current.getTracks().forEach(track => {
+        peerRef.current.addTrack(track, streamRef.current);
+        console.log(`Трек добавлен: ${track.kind}, enabled: ${track.enabled}`);
+      });
       
       // Создаем offer
       const offer = await peerRef.current.createOffer({
@@ -428,9 +383,9 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         offerToReceiveVideo: true
       });
       
+      // Устанавливаем локальное описание
       await peerRef.current.setLocalDescription(offer);
-      console.log('Local description установлен:', offer);
-      setSignalingState(peerRef.current.signalingState);
+      console.log('Local description установлен');
       
       return offer;
     } catch (err) {
