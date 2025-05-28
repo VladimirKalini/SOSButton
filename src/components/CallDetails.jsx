@@ -27,6 +27,7 @@ const CallDetails = () => {
   const [showFullDebug, setShowFullDebug] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const processedTracksRef = useRef(new Set()); // Для отслеживания уже обработанных треков
+  const pendingIceCandidatesRef = useRef([]); // Для хранения кандидатов ICE
 
   // Добавляем отладочную информацию
   const addDebugInfo = (info) => {
@@ -34,11 +35,18 @@ const CallDetails = () => {
     
     // Ограничиваем количество строк в логе (максимум 100 строк)
     setDebugInfo(prev => {
-      const lines = prev.split('\n');
-      if (lines.length > 100) {
-        // Оставляем только последние 100 строк
+      const lines = prev.split('\n').filter(line => line.trim() !== '');
+      
+      // Если превышен лимит строк, удаляем старые записи
+      if (lines.length >= 100) {
         return [...lines.slice(lines.length - 99), info].join('\n');
       }
+      
+      // Если строка пустая, начинаем с новой строки
+      if (prev === '') {
+        return info;
+      }
+      
       return `${prev}\n${info}`;
     });
   };
@@ -114,6 +122,7 @@ const CallDetails = () => {
       const trackId = event.track.id;
       if (processedTracksRef.current.has(trackId)) {
         // Трек уже был обработан, пропускаем
+        addDebugInfo(`Пропускаем уже обработанный трек: ${event.track.kind}, id: ${trackId}`);
         return;
       }
       
@@ -124,53 +133,66 @@ const CallDetails = () => {
       
       if (event.track.kind === 'video') {
         setHasVideo(true);
+        addDebugInfo('Видеотрек получен');
       } else if (event.track.kind === 'audio') {
         setHasAudio(true);
+        addDebugInfo('Аудиотрек получен');
+      }
+      
+      // Получаем медиапоток
+      const stream = event.streams[0];
+      
+      if (!stream) {
+        addDebugInfo('Ошибка: поток отсутствует в событии track');
+        return;
       }
       
       if (videoRef.current) {
-        // Проверяем, есть ли уже видеопоток
-        const currentStream = videoRef.current.srcObject;
-        
-        // Если поток уже установлен, добавляем трек к существующему потоку
-        if (currentStream) {
-          addDebugInfo('Добавление трека к существующему потоку');
-          // Не заменяем поток, если он уже есть
-        } else {
-          // Устанавливаем новый поток
-          videoRef.current.srcObject = event.streams[0];
+        // Устанавливаем поток в видеоэлемент
+        if (!videoRef.current.srcObject) {
+          videoRef.current.srcObject = stream;
           addDebugInfo('Установлен новый видеопоток');
-          
-          // Настраиваем обработчики для видеоэлемента
-          videoRef.current.onloadedmetadata = () => {
-            addDebugInfo('Метаданные видео загружены');
-            
-            // Используем Promise для обработки воспроизведения
-            const playPromise = videoRef.current.play();
-            
-            if (playPromise !== undefined) {
-              playPromise
-                .then(() => {
-                  addDebugInfo('Воспроизведение видео успешно запущено');
-                  setAutoplayBlocked(false);
-                })
-                .catch(err => {
-                  addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
-                  
-                  // Если ошибка связана с автовоспроизведением, добавляем кнопку для ручного запуска
-                  if (err.name === 'NotAllowedError') {
-                    addDebugInfo('Автовоспроизведение заблокировано браузером');
-                    setAutoplayBlocked(true);
-                  }
-                });
-            }
-          };
-          
-          // Обработка ошибок
-          videoRef.current.onerror = (e) => {
-            addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
-          };
+        } else {
+          // Если поток уже есть, проверяем, тот же ли это поток
+          const currentStream = videoRef.current.srcObject;
+          if (currentStream.id !== stream.id) {
+            // Если это новый поток, заменяем существующий
+            videoRef.current.srcObject = stream;
+            addDebugInfo('Заменен существующий видеопоток');
+          } else {
+            addDebugInfo('Поток уже установлен, пропускаем');
+          }
         }
+        
+        // Настраиваем обработчики для видеоэлемента
+        videoRef.current.onloadedmetadata = () => {
+          addDebugInfo('Метаданные видео загружены');
+          
+          // Запускаем воспроизведение
+          try {
+            videoRef.current.play()
+              .then(() => {
+                addDebugInfo('Воспроизведение видео успешно запущено');
+                setAutoplayBlocked(false);
+              })
+              .catch(err => {
+                addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
+                
+                // Если ошибка связана с автовоспроизведением, показываем кнопку для ручного запуска
+                if (err.name === 'NotAllowedError') {
+                  addDebugInfo('Автовоспроизведение заблокировано браузером');
+                  setAutoplayBlocked(true);
+                }
+              });
+          } catch (err) {
+            addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
+          }
+        };
+        
+        // Обработка ошибок
+        videoRef.current.onerror = (e) => {
+          addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
+        };
       } else {
         addDebugInfo('Ошибка: videoRef.current отсутствует');
       }
@@ -178,8 +200,15 @@ const CallDetails = () => {
       // Отслеживаем окончание трека
       event.track.onended = () => {
         addDebugInfo(`Трек ${event.track.kind} завершен`);
-        // Удаляем трек из списка обработанных, чтобы можно было обработать новый трек с тем же ID
+        // Удаляем трек из списка обработанных
         processedTracksRef.current.delete(trackId);
+        
+        // Проверяем, остались ли еще треки
+        if (event.track.kind === 'video') {
+          setHasVideo(false);
+        } else if (event.track.kind === 'audio') {
+          setHasAudio(false);
+        }
       };
     };
 
@@ -237,6 +266,10 @@ const CallDetails = () => {
           addDebugInfo('ICE кандидат успешно добавлен');
         } else {
           addDebugInfo('Не удалось добавить ICE кандидата: нет remoteDescription');
+          // Сохраняем кандидата для последующего добавления
+          const pendingCandidates = pendingIceCandidatesRef.current || [];
+          pendingIceCandidatesRef.current = [...pendingCandidates, candidate];
+          addDebugInfo(`ICE кандидат сохранен (всего: ${pendingIceCandidatesRef.current.length})`);
         }
       } catch (err) {
         addDebugInfo(`Ошибка при добавлении ICE кандидата: ${err.message}`);
@@ -362,6 +395,20 @@ const CallDetails = () => {
           // Устанавливаем удаленное описание
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
           addDebugInfo('Remote description установлен');
+          
+          // Добавляем сохраненные ICE кандидаты, если они есть
+          if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
+            addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
+            for (const candidate of pendingIceCandidatesRef.current) {
+              try {
+                await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
+              } catch (err) {
+                addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
+              }
+            }
+            pendingIceCandidatesRef.current = [];
+          }
           
           // Создаем ответ
           const answer = await peerRef.current.createAnswer({
@@ -525,6 +572,20 @@ const CallDetails = () => {
         await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
         addDebugInfo('Remote description установлен');
         
+        // Добавляем сохраненные ICE кандидаты, если они есть
+        if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
+          addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов`);
+          for (const candidate of pendingIceCandidatesRef.current) {
+            try {
+              await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+              addDebugInfo('Сохраненный ICE кандидат успешно добавлен');
+            } catch (err) {
+              addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата: ${err.message}`);
+            }
+          }
+          pendingIceCandidatesRef.current = [];
+        }
+        
         // Создаем ответ
         const answer = await peerRef.current.createAnswer({
           offerToReceiveAudio: true,
@@ -597,91 +658,85 @@ const CallDetails = () => {
   useEffect(() => {
     if (!call || !call.latitude || !call.longitude) return;
 
-    // Используем OpenStreetMap вместо Google Maps (не требует API ключа)
-    const createMapWithOSM = () => {
+    const initializeGoogleMap = () => {
       try {
-        addDebugInfo('Инициализация карты OpenStreetMap...');
-        // Проверяем, загружен ли Leaflet
-        if (!window.L) {
-          addDebugInfo('Загрузка библиотеки Leaflet...');
-          // Загружаем CSS для Leaflet
-          const linkElement = document.createElement('link');
-          linkElement.rel = 'stylesheet';
-          linkElement.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-          linkElement.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
-          linkElement.crossOrigin = '';
-          document.head.appendChild(linkElement);
+        addDebugInfo('Инициализация Google Maps...');
+        
+        // Создаем скрипт для загрузки Google Maps API
+        const script = document.createElement('script');
+        const apiKey = 'AIzaSyBEa9adTA4gvPPd-F0OLG0Bh-YmefDpCN0'; // Используем API ключ
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap`;
+        script.async = true;
+        script.defer = true;
+        
+        // Создаем глобальную функцию инициализации карты
+        window.initMap = () => {
+          if (!mapRef.current) return;
           
-          // Загружаем JavaScript для Leaflet
-          const script = document.createElement('script');
-          script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-          script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
-          script.crossOrigin = '';
-          script.onload = () => {
-            addDebugInfo('Библиотека Leaflet загружена');
-            initializeOSMap(call.latitude, call.longitude);
-          };
-          document.head.appendChild(script);
-        } else {
-          initializeOSMap(call.latitude, call.longitude);
-        }
+          const lat = parseFloat(call.latitude);
+          const lng = parseFloat(call.longitude);
+          
+          if (isNaN(lat) || isNaN(lng)) {
+            console.error('Некорректные координаты:', call.latitude, call.longitude);
+            addDebugInfo(`Некорректные координаты: ${call.latitude}, ${call.longitude}`);
+            return;
+          }
+          
+          // Создаем карту
+          const map = new window.google.maps.Map(mapRef.current, {
+            center: { lat, lng },
+            zoom: 15,
+            mapTypeId: window.google.maps.MapTypeId.ROADMAP
+          });
+          
+          // Добавляем маркер
+          const marker = new window.google.maps.Marker({
+            position: { lat, lng },
+            map: map,
+            title: 'SOS местоположение'
+          });
+          
+          // Добавляем информационное окно
+          const infoWindow = new window.google.maps.InfoWindow({
+            content: '<div><strong>SOS местоположение</strong></div>'
+          });
+          
+          marker.addListener('click', () => {
+            infoWindow.open(map, marker);
+          });
+          
+          // Открываем информационное окно по умолчанию
+          infoWindow.open(map, marker);
+          
+          addDebugInfo('Карта успешно инициализирована');
+        };
+        
+        // Добавляем обработчик ошибок
+        script.onerror = () => {
+          addDebugInfo('Ошибка при загрузке Google Maps API');
+          console.error('Не удалось загрузить Google Maps API');
+        };
+        
+        // Добавляем скрипт на страницу
+        document.head.appendChild(script);
+        
       } catch (error) {
         console.error('Ошибка при создании карты:', error);
         addDebugInfo(`Ошибка при создании карты: ${error.message}`);
       }
     };
-
-    const initializeOSMap = (lat, lng) => {
-      if (!mapRef.current) {
-        addDebugInfo('Ошибка: mapRef.current отсутствует');
-        return;
-      }
-      
-      try {
-        addDebugInfo(`Инициализация карты с координатами: ${lat}, ${lng}`);
-        const latNum = parseFloat(lat);
-        const lngNum = parseFloat(lng);
-        
-        if (isNaN(latNum) || isNaN(lngNum)) {
-          console.error('Некорректные координаты:', lat, lng);
-          addDebugInfo(`Некорректные координаты: ${lat}, ${lng}`);
-          return;
-        }
-        
-        // Очищаем контейнер карты, если там уже есть карта
-        mapRef.current.innerHTML = '';
-        
-        // Создаем карту
-        const map = window.L.map(mapRef.current).setView([latNum, lngNum], 15);
-        
-        // Добавляем слой OpenStreetMap
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        }).addTo(map);
-        
-        // Добавляем маркер
-        const marker = window.L.marker([latNum, lngNum]).addTo(map);
-        marker.bindPopup("SOS местоположение").openPopup();
-        
-        mapMarkerRef.current = marker;
-        
-        console.log('Карта OpenStreetMap успешно инициализирована');
-        addDebugInfo('Карта успешно инициализирована');
-        
-        // Принудительно обновляем размер карты после рендеринга
-        setTimeout(() => {
-          if (map) {
-            map.invalidateSize();
-            addDebugInfo('Размер карты обновлен');
-          }
-        }, 500);
-      } catch (error) {
-        console.error('Ошибка при инициализации карты:', error);
-        addDebugInfo(`Ошибка при инициализации карты: ${error.message}`);
-      }
-    };
     
-    createMapWithOSM();
+    // Проверяем, загружен ли уже Google Maps API
+    if (window.google && window.google.maps) {
+      window.initMap();
+    } else {
+      initializeGoogleMap();
+    }
+    
+    // Очистка при размонтировании
+    return () => {
+      delete window.initMap;
+    };
   }, [call]);
 
   const handleCancelCall = async () => {
@@ -724,7 +779,8 @@ const CallDetails = () => {
     
     // Очищаем список обработанных треков
     processedTracksRef.current.clear();
-    addDebugInfo('Список обработанных треков очищен');
+    pendingIceCandidatesRef.current = [];
+    addDebugInfo('Список обработанных треков и кандидатов ICE очищен');
     
     // Закрываем текущее соединение
     if (peerRef.current) {
@@ -749,6 +805,9 @@ const CallDetails = () => {
     setHasAudio(false);
     setConnectionStatus('Переподключение...');
     setAutoplayBlocked(false);
+    
+    // Очищаем логи
+    setDebugInfo('Логи очищены при переподключении');
     
     // Перезагружаем данные вызова с сервера
     axios.get(`/api/calls/${id}`, {
