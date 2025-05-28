@@ -83,6 +83,18 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
               return; // Пропускаем текущий answer, так как отправили новый offer
             }
             
+            // Проверяем, что answer имеет правильный формат
+            if (!answer || !answer.type || !answer.sdp) {
+              console.error('Получен некорректный answer:', answer);
+              addDebugMessage('Ошибка: некорректный формат ответа от сервера');
+              
+              // Пробуем переподключиться при ошибке
+              setTimeout(() => {
+                reinitializeConnection();
+              }, 1000);
+              return;
+            }
+            
             // Устанавливаем remoteDescription
             await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
             console.log('Remote description установлен успешно');
@@ -490,25 +502,62 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   // Инициализация медиапотоков
   const initializeMedia = async () => {
     try {
-      const constraints = { 
-        video: { 
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }, 
-        audio: true 
-      };
+      // Проверяем, что мы на iOS
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
       
-      try {
-        streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log('Доступ к основной камере получен');
-      } catch (err) {
-        console.error('Ошибка при запросе основной камеры:', err);
+      // Сначала запрашиваем только аудио на iOS для обхода ограничений
+      if (isIOS) {
+        addDebugMessage('Обнаружена iOS платформа, используем специальный подход для запроса разрешений');
         
-        // Пробуем получить доступ к любой камере
-        constraints.video = true;
-        streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log('Доступ к фронтальной камере получен');
+        try {
+          // Сначала запрашиваем только аудио
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          addDebugMessage('Доступ к аудио получен на iOS');
+          
+          // Затем запрашиваем видео
+          const constraints = { 
+            video: { 
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          };
+          
+          const videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+          addDebugMessage('Доступ к видео получен на iOS');
+          
+          // Объединяем треки из обоих потоков
+          const combinedStream = new MediaStream();
+          audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+          videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+          
+          streamRef.current = combinedStream;
+        } catch (err) {
+          console.error('Ошибка при запросе медиа на iOS:', err);
+          throw err;
+        }
+      } else {
+        // Стандартный подход для других платформ
+        const constraints = { 
+          video: { 
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }, 
+          audio: true 
+        };
+        
+        try {
+          streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log('Доступ к основной камере получен');
+        } catch (err) {
+          console.error('Ошибка при запросе основной камеры:', err);
+          
+          // Пробуем получить доступ к любой камере
+          constraints.video = true;
+          streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log('Доступ к фронтальной камере получен');
+        }
       }
       
       if (videoRef.current) {

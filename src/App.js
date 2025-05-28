@@ -1,5 +1,5 @@
 // src/App.js
-import React from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './authContext';
 import LoginForm from './components/Login';
@@ -7,15 +7,22 @@ import Register from './components/Register';
 import { SOSButton } from './components/SOSButton';
 import GuardDashboard from './components/GuardDashboard';
 import CallDetails from './components/CallDetails';
+import PermissionsRequest from './components/PermissionsRequest';
 
 function UserApp() {
   const { token, user } = useAuth();
   const phone = user?.phone || '';
+  const [permissionsGranted, setPermissionsGranted] = useState(false);
 
   return (
     <div style={{ padding: '2rem', textAlign: 'center' }}>
       <h1>SOS Alert</h1>
-      <SOSButton token={token} userPhone={phone} />
+      {!permissionsGranted && (
+        <PermissionsRequest onPermissionsGranted={() => setPermissionsGranted(true)} />
+      )}
+      {(permissionsGranted || !/iPad|iPhone|iPod/.test(navigator.userAgent)) && (
+        <SOSButton token={token} userPhone={phone} />
+      )}
     </div>
   );
 }

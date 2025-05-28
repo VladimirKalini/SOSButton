@@ -173,6 +173,13 @@ const CallDetails = () => {
           return;
         }
         
+        // Проверяем, что offer имеет правильный формат
+        if (!call.offer || !call.offer.type || !call.offer.sdp) {
+          addDebugInfo('Offer имеет некорректный формат');
+          setError('Не удалось установить видеосвязь: некорректный формат offer');
+          return;
+        }
+        
         // Устанавливаем удаленное описание (offer)
         await peerRef.current.setRemoteDescription(new RTCSessionDescription(call.offer));
         addDebugInfo('Remote description установлен');
@@ -199,34 +206,21 @@ const CallDetails = () => {
         
         // Устанавливаем локальное описание (answer)
         await peerRef.current.setLocalDescription(answer);
-        addDebugInfo('Local description (answer) установлен');
+        addDebugInfo('Local description установлен');
         
         // Отправляем ответ клиенту
         socketRef.current.emit('sos-answer', { answer, id });
-        addDebugInfo('Answer отправлен клиенту');
+        addDebugInfo('Ответ отправлен клиенту');
         
-        setConnectionStatus('Ожидание соединения...');
-        
-        // Проверяем состояние соединения через некоторое время
-        setTimeout(() => {
-          if (peerRef.current) {
-            const state = peerRef.current.iceConnectionState;
-            addDebugInfo(`Проверка состояния ICE: ${state}`);
-            
-            if (state !== 'connected' && state !== 'completed') {
-              addDebugInfo('Соединение не установлено, пробуем переподключиться');
-              handleReconnect();
-            }
-          }
-        }, 15000);
+        setConnectionStatus('Соединение устанавливается...');
       } catch (err) {
-        addDebugInfo(`Ошибка при установке WebRTC соединения: ${err.message}`);
-        setError('Не удалось установить видеосвязь: ' + err.message);
+        addDebugInfo(`Ошибка при обработке offer: ${err.message}`);
+        setError(`Ошибка при установке видеосвязи: ${err.message}`);
         
-        // Пробуем переподключиться после ошибки
+        // Пробуем переподключиться при ошибке
         setTimeout(() => {
           handleReconnect();
-        }, 3000);
+        }, 2000);
       }
     };
 
@@ -617,6 +611,22 @@ const CallDetails = () => {
         
         if (!stream) {
           addDebugInfo('Ошибка: поток отсутствует в событии track');
+          
+          // Создаем новый поток, если отсутствует
+          const newStream = new MediaStream();
+          newStream.addTrack(event.track);
+          
+          if (videoRef.current && !videoRef.current.srcObject) {
+            videoRef.current.srcObject = newStream;
+            addDebugInfo('Создан новый поток с добавленным треком');
+          } else if (videoRef.current) {
+            // Добавляем трек к существующему потоку
+            const currentStream = videoRef.current.srcObject;
+            if (currentStream instanceof MediaStream) {
+              currentStream.addTrack(event.track);
+              addDebugInfo('Трек добавлен к существующему потоку');
+            }
+          }
           return;
         }
         
