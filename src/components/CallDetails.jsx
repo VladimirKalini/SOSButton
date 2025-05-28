@@ -132,11 +132,12 @@ const CallDetails = () => {
     // Подключение к Socket.IO с более надежными параметрами
     socketRef.current = io(serverUrl, {
       auth: { token },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'], // Сначала polling, затем websocket
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       timeout: 30000,
-      forceNew: true
+      forceNew: true,
+      upgrade: true
     });
 
     // Настройка обработчиков для socket
@@ -278,6 +279,16 @@ const CallDetails = () => {
     const createMapWithOSM = () => {
       try {
         addDebugInfo('Инициализация карты OpenStreetMap...');
+        
+        // Проверяем, не инициализирована ли карта уже
+        if (mapRef.current && mapRef.current._leaflet_id) {
+          addDebugInfo('Карта уже инициализирована, очищаем контейнер');
+          mapRef.current.innerHTML = '';
+          if (window.L && window.L.DomEvent) {
+            window.L.DomEvent.off(mapRef.current);
+          }
+        }
+        
         // Проверяем, загружен ли Leaflet
         if (!window.L) {
           addDebugInfo('Загрузка библиотеки Leaflet...');
@@ -325,11 +336,23 @@ const CallDetails = () => {
           return;
         }
         
-        // Очищаем контейнер карты, если там уже есть карта
+        // Очищаем контейнер карты полностью
         mapRef.current.innerHTML = '';
+        
+        // Удаляем старые обработчики событий, если они есть
+        if (window.L && window.L.DomEvent) {
+          window.L.DomEvent.off(mapRef.current);
+        }
+        
+        // Проверяем, существует ли уже карта с этим ID
+        if (window.mapInstance) {
+          window.mapInstance.remove();
+          addDebugInfo('Существующая карта удалена');
+        }
         
         // Создаем карту
         const map = window.L.map(mapRef.current).setView([latNum, lngNum], 15);
+        window.mapInstance = map; // Сохраняем ссылку на карту
         
         // Добавляем слой OpenStreetMap
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -488,11 +511,12 @@ const CallDetails = () => {
       // Создаем новое соединение с сокетом
       socketRef.current = io(serverUrl, {
         auth: { token },
-        transports: ['websocket', 'polling'],
+        transports: ['polling', 'websocket'], // Сначала polling, затем websocket
         reconnectionAttempts: 10,
         reconnectionDelay: 1000,
         timeout: 30000,
-        forceNew: true
+        forceNew: true,
+        upgrade: true
       });
       
       // Настраиваем обработчики для сокета
@@ -642,10 +666,20 @@ const CallDetails = () => {
               
               // Запускаем воспроизведение
               try {
+                // Сначала пробуем с отключенным звуком для обхода ограничений браузера
+                videoRef.current.muted = true;
                 videoRef.current.play()
                   .then(() => {
-                    addDebugInfo('Воспроизведение видео успешно запущено');
+                    addDebugInfo('Воспроизведение видео успешно запущено (без звука)');
                     setAutoplayBlocked(false);
+                    
+                    // Через секунду включаем звук
+                    setTimeout(() => {
+                      if (videoRef.current) {
+                        videoRef.current.muted = false;
+                        addDebugInfo('Звук восстановлен после успешного запуска воспроизведения');
+                      }
+                    }, 1000);
                   })
                   .catch(err => {
                     addDebugInfo(`Ошибка воспроизведения: ${err.message}`);
@@ -654,16 +688,30 @@ const CallDetails = () => {
                     if (err.name === 'NotAllowedError') {
                       addDebugInfo('Автовоспроизведение заблокировано браузером');
                       setAutoplayBlocked(true);
+                    } else {
+                      // Пробуем переподключиться при других ошибках
+                      addDebugInfo('Ошибка воспроизведения, попытка переподключения через 2 секунды...');
+                      setTimeout(() => {
+                        handleReconnect();
+                      }, 2000);
                     }
                   });
               } catch (err) {
                 addDebugInfo(`Ошибка при запуске воспроизведения: ${err.message}`);
+                // Пробуем переподключиться при ошибке
+                setTimeout(() => {
+                  handleReconnect();
+                }, 2000);
               }
             };
             
             // Обработка ошибок
             videoRef.current.onerror = (e) => {
               addDebugInfo(`Ошибка видеоэлемента: ${e.target.error ? e.target.error.message : 'Неизвестная ошибка'}`);
+              // Пробуем переподключиться при ошибке видео
+              setTimeout(() => {
+                handleReconnect();
+              }, 2000);
             };
           } catch (err) {
             addDebugInfo(`Ошибка при настройке видеоэлемента: ${err.message}`);
@@ -827,6 +875,9 @@ const CallDetails = () => {
           return;
         }
         
+        // Принудительно включаем автовоспроизведение
+        videoRef.current.muted = true; // Временно отключаем звук для обхода ограничений автовоспроизведения
+        
         const playPromise = videoRef.current.play();
         
         if (playPromise !== undefined) {
@@ -834,10 +885,46 @@ const CallDetails = () => {
             .then(() => {
               addDebugInfo('Воспроизведение успешно запущено вручную');
               setAutoplayBlocked(false);
+              
+              // Через секунду возвращаем звук
+              setTimeout(() => {
+                if (videoRef.current) {
+                  videoRef.current.muted = false;
+                  addDebugInfo('Звук восстановлен после успешного запуска воспроизведения');
+                }
+              }, 1000);
             })
             .catch(err => {
               addDebugInfo(`Ошибка при ручном запуске воспроизведения: ${err.message}`);
               setError(`Не удалось запустить видео: ${err.message}`);
+              
+              // Пробуем альтернативный метод запуска
+              try {
+                // Создаем новый элемент video и пробуем воспроизвести в нем
+                const tempVideo = document.createElement('video');
+                tempVideo.srcObject = videoRef.current.srcObject;
+                tempVideo.muted = true;
+                tempVideo.play()
+                  .then(() => {
+                    // Если успешно, копируем поток обратно
+                    if (videoRef.current) {
+                      videoRef.current.srcObject = tempVideo.srcObject;
+                      videoRef.current.play()
+                        .then(() => {
+                          addDebugInfo('Воспроизведение запущено альтернативным методом');
+                          setAutoplayBlocked(false);
+                          setTimeout(() => {
+                            if (videoRef.current) videoRef.current.muted = false;
+                          }, 1000);
+                        });
+                    }
+                  })
+                  .catch(() => {
+                    addDebugInfo('Альтернативный метод запуска тоже не сработал');
+                  });
+              } catch (innerErr) {
+                addDebugInfo(`Ошибка альтернативного метода: ${innerErr.message}`);
+              }
             });
         }
       } catch (err) {
@@ -1175,200 +1262,31 @@ const CallDetails = () => {
                       animation: 'spin 1s linear infinite'
                     }}></div>
                     <style>{`
-                      @keyframes spin {
-                        0% { transform: rotate(0deg); }
-                        100% { transform: rotate(360deg); }
-                      }
-                    `}</style>
-                  </div>
-                )}
-                
-                {autoplayBlocked && (
-                  <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(0,0,0,0.7)',
-                    color: 'white',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    flexDirection: 'column',
-                    padding: '1rem'
-                  }}>
-                    <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-                      Автовоспроизведение видео заблокировано браузером
-                    </div>
-                    <button 
-                      onClick={handleManualPlay}
-                      style={{ 
-                        padding: '0.75rem 1.5rem', 
-                        backgroundColor: '#28a745', 
-                        color: 'white', 
-                        border: 'none',
-                        borderRadius: '0.25rem',
-                        cursor: 'pointer',
-                        fontSize: '1rem'
-                      }}
-                    >
-                      Запустить видео
-                    </button>
+```
+</style>
                   </div>
                 )}
               </div>
-              
-              <div style={{ 
-                marginTop: '0.5rem', 
-                textAlign: 'center',
-                fontSize: '0.9rem',
-                color: hasVideo || hasAudio ? '#28a745' : '#dc3545'
-              }}>
-                {hasVideo || hasAudio ? 'Соединение установлено' : connectionStatus}
-                {hasVideo && <span> (видео)</span>}
-                {hasAudio && <span> (аудио)</span>}
-              </div>
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem' }}>
-                <button 
-                  onClick={handleReconnect}
-                  style={{ 
-                    padding: '0.5rem 1rem', 
-                    backgroundColor: '#28a745', 
-                    color: 'white', 
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                  Переподключить
-                </button>
-                
-                <button 
-                  onClick={handleManualPlay}
-                  style={{ 
-                    padding: '0.5rem 1rem', 
-                    backgroundColor: '#007bff', 
-                    color: 'white', 
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                  Запустить видео
-                </button>
-                
-                <button 
-                  onClick={toggleDebugModal}
-                  style={{ 
-                    padding: '0.5rem 1rem', 
-                    backgroundColor: '#6c757d', 
-                    color: 'white', 
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                  {showFullDebug ? 'Скрыть отладку' : 'Показать отладку'}
-                </button>
-                
-                <button 
-                  onClick={clearDebugInfo}
-                  style={{ 
-                    padding: '0.5rem 1rem', 
-                    backgroundColor: '#dc3545', 
-                    color: 'white', 
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                  Очистить лог
-                </button>
-              </div>
-              
-              {showFullDebug && (
-                <div style={{ 
-                  marginTop: '1rem', 
-                  fontSize: '0.8rem', 
-                  backgroundColor: '#f8f9fa',
-                  border: '1px solid #dee2e6',
-                  borderRadius: '0.25rem',
-                  padding: '0.5rem',
-                  maxHeight: '300px',
-                  overflowY: 'auto',
-                  whiteSpace: 'pre-line'
-                }}>
-                  {debugInfo}
-                </div>
-              )}
             </div>
           ) : (
             <div>
-              {recordedVideos.length > 0 ? (
-                <div>
-                  <div style={{ 
-                    backgroundColor: '#000', 
+              {recordedVideos.map(video => (
+                <button 
+                  key={video.id}
+                  onClick={() => handleSelectVideo(video)}
+                  style={{ 
+                    padding: '0.5rem 1rem', 
+                    backgroundColor: selectedVideo === video ? '#007bff' : '#f8f9fa',
+                    color: selectedVideo === video ? 'white' : '#6c757d',
+                    border: 'none',
                     borderRadius: '0.25rem',
-                    height: '300px',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    overflow: 'hidden',
-                    marginBottom: '1rem'
-                  }}>
-                    {selectedVideo && (
-                      <video 
-                        src={selectedVideo.url} 
-                        controls 
-                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                      />
-                    )}
-                  </div>
-                  
-                  <div style={{ 
-                    maxHeight: '150px', 
-                    overflowY: 'auto',
-                    border: '1px solid #dee2e6',
-                    borderRadius: '0.25rem',
-                    padding: '0.5rem'
-                  }}>
-                    <h4>Доступные записи:</h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      {recordedVideos.map((video, index) => (
-                        <div 
-                          key={index}
-                          onClick={() => handleSelectVideo(video)}
-                          style={{ 
-                            padding: '0.5rem',
-                            backgroundColor: selectedVideo === video ? '#e2f0ff' : 'transparent',
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            border: '1px solid #dee2e6'
-                          }}
-                        >
-                          {new Date(parseInt(video.name.split('_')[1])).toLocaleString()}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ 
-                  display: 'flex', 
-                  justifyContent: 'center', 
-                  alignItems: 'center', 
-                  height: '400px',
-                  color: '#6c757d'
-                }}>
-                  Записи не найдены
-                </div>
-              )}
+                    cursor: 'pointer',
+                    marginBottom: '0.5rem'
+                  }}
+                >
+                  {video.title}
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -1377,4 +1295,4 @@ const CallDetails = () => {
   );
 };
 
-export default CallDetails; 
+export default CallDetails;
