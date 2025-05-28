@@ -30,10 +30,11 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   useEffect(() => {
     socketRef.current = io(serverUrl, { 
       auth: { token }, 
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 5,
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-      timeout: 20000
+      timeout: 30000,
+      upgrade: true
     });
 
     socketRef.current.on('connect', () => {
@@ -56,48 +57,68 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           setSignalingState(currentState);
           console.log('Текущее состояние сигнализации:', currentState);
           
-          // Если состояние stable или have-local-offer, можно установить
-          if (currentState === 'stable' || currentState === 'have-local-offer') {
-            try {
-              await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-              console.log('Remote description установлен успешно');
-              addDebugMessage('Соединение установлено');
+          try {
+            // Проверяем, не находимся ли мы в состоянии stable
+            if (currentState === 'stable') {
+              console.log('Сброс соединения перед установкой remoteDescription, так как состояние stable');
+              // Создаем новый offer для изменения состояния
+              const newOffer = await peerRef.current.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+              });
+              await peerRef.current.setLocalDescription(newOffer);
+              console.log('Создан новый offer для изменения состояния');
               
-              // Отправляем сохраненные ICE кандидаты после установки remoteDescription
-              if (sosId) {
-                iceCandidates.forEach(candidate => {
-                  socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-                  console.log('Отправлен сохраненный ICE кандидат');
-                });
-                setIceCandidates([]);
-              }
+              // Отправляем новый offer на сервер
+              socketRef.current.emit('sos-offer', { 
+                offer: newOffer, 
+                latitude: location?.latitude, 
+                longitude: location?.longitude, 
+                phone: userPhone,
+                reconnect: true,
+                sosId: sosId
+              });
               
-              // Проверяем, изменилось ли состояние после установки remoteDescription
-              setTimeout(() => {
-                if (peerRef.current && peerRef.current.signalingState === 'have-local-offer') {
-                  console.log('Состояние все еще have-local-offer после установки remoteDescription');
-                  addDebugMessage('Застряли в состоянии have-local-offer, пробуем переподключиться');
+              console.log('Новый offer отправлен, пропускаем текущий answer');
+              return; // Пропускаем текущий answer, так как отправили новый offer
+            }
+            
+            // Устанавливаем remoteDescription
+            await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('Remote description установлен успешно');
+            addDebugMessage('Соединение установлено');
+            
+            // Отправляем сохраненные ICE кандидаты после установки remoteDescription
+            if (sosId) {
+              iceCandidates.forEach(candidate => {
+                socketRef.current.emit('ice-candidate', { candidate, id: sosId });
+                console.log('Отправлен сохраненный ICE кандидат');
+              });
+              setIceCandidates([]);
+            }
+            
+            // Проверяем, изменилось ли состояние после установки remoteDescription
+            setTimeout(() => {
+              if (peerRef.current) {
+                const newState = peerRef.current.signalingState;
+                console.log('Состояние после установки remoteDescription:', newState);
+                
+                if (newState === 'have-local-offer' || newState === 'stable' && !peerRef.current.connectionState === 'connected') {
+                  console.log('Соединение в неправильном состоянии после установки remoteDescription');
+                  addDebugMessage('Проблема с состоянием соединения, пробуем переподключиться');
                   
                   // Принудительно переподключаемся
                   setTimeout(() => {
                     reinitializeConnection();
                   }, 1000);
                 }
-              }, 2000);
-            } catch (error) {
-              console.error('Ошибка при установке remoteDescription:', error);
-              addDebugMessage(`Ошибка при установке соединения: ${error.message}`);
-              
-              // Пробуем переподключиться при ошибке
-              setTimeout(() => {
-                reinitializeConnection();
-              }, 1000);
-            }
-          } else {
-            console.error(`Невозможно установить remoteDescription в состоянии ${currentState}`);
-            addDebugMessage(`Ошибка: неверное состояние соединения ${currentState}`);
+              }
+            }, 2000);
+          } catch (error) {
+            console.error('Ошибка при установке remoteDescription:', error);
+            addDebugMessage(`Ошибка при установке соединения: ${error.message}`);
             
-            // Если состояние не подходит, пробуем переинициализировать соединение
+            // Пробуем переподключиться при ошибке
             setTimeout(() => {
               reinitializeConnection();
             }, 1000);

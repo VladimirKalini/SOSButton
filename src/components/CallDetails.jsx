@@ -350,6 +350,23 @@ const CallDetails = () => {
           addDebugInfo('Существующая карта удалена');
         }
         
+        // Исправляем проблему с иконками Leaflet
+        if (window.L && window.L.Icon) {
+          window.L.Icon.Default.imagePath = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/';
+          
+          // Альтернативный вариант - определяем иконки вручную
+          window.L.Icon.Default.prototype.options = {
+            iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+            iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            tooltipAnchor: [16, -28],
+            shadowSize: [41, 41]
+          };
+        }
+        
         // Создаем карту
         const map = window.L.map(mapRef.current).setView([latNum, lngNum], 15);
         window.mapInstance = map; // Сохраняем ссылку на карту
@@ -359,7 +376,7 @@ const CallDetails = () => {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
         
-        // Добавляем маркер
+        // Добавляем маркер с исправленной иконкой
         const marker = window.L.marker([latNum, lngNum]).addTo(map);
         marker.bindPopup("SOS местоположение").openPopup();
         
@@ -520,87 +537,48 @@ const CallDetails = () => {
       });
       
       // Настраиваем обработчики для сокета
-      socketRef.current.on('connect', () => {
-        addDebugInfo(`Socket.IO переподключен (id: ${socketRef.current.id})`);
-        socketRef.current.emit('join-room', id);
-        
-        // Создаем новое WebRTC соединение
-        peerRef.current = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { 
-              urls: 'turn:numb.viagenie.ca',
-              username: 'webrtc@live.com',
-              credential: 'muazkh'
-            },
-            {
-              urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-              username: 'webrtc',
-              credential: 'webrtc'
-            }
-          ],
-          iceCandidatePoolSize: 10,
-          bundlePolicy: 'max-bundle',
-          rtcpMuxPolicy: 'require',
-          iceTransportPolicy: 'all'
-        });
-        
-        // Настраиваем обработчики для WebRTC
-        setupPeerHandlers();
-        
-        // Настраиваем обработчики для сокета
-        setupSocketHandlers();
-        
-        // Обрабатываем offer, если он есть
-        if (response.data.offer) {
-          try {
-            // Устанавливаем удаленное описание (offer)
-            peerRef.current.setRemoteDescription(new RTCSessionDescription(response.data.offer))
-              .then(() => {
-                addDebugInfo('Remote description установлен при переподключении');
-                
-                // Создаем ответ
-                return peerRef.current.createAnswer({
-                  offerToReceiveAudio: true,
-                  offerToReceiveVideo: true
-                });
-              })
-              .then(answer => {
-                // Устанавливаем локальное описание (answer)
-                return peerRef.current.setLocalDescription(answer)
-                  .then(() => answer);
-              })
-              .then(answer => {
-                addDebugInfo('Local description (answer) установлен при переподключении');
-                
-                // Отправляем ответ клиенту
-                socketRef.current.emit('sos-answer', { answer, id });
-                addDebugInfo('Answer отправлен клиенту при переподключении');
-                
-                setConnectionStatus('Ожидание соединения после переподключения...');
-              })
-              .catch(err => {
-                addDebugInfo(`Ошибка при установке WebRTC соединения при переподключении: ${err.message}`);
-                setError('Не удалось установить видеосвязь: ' + err.message);
+      setupSocketHandlers();
+      
+      // Обрабатываем offer, если он есть
+      if (response.data.offer) {
+        try {
+          // Устанавливаем удаленное описание (offer)
+          peerRef.current.setRemoteDescription(new RTCSessionDescription(response.data.offer))
+            .then(() => {
+              addDebugInfo('Remote description установлен при переподключении');
+              
+              // Создаем ответ
+              return peerRef.current.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
               });
-          } catch (err) {
-            addDebugInfo(`Ошибка при обработке offer при переподключении: ${err.message}`);
-            setError('Не удалось установить видеосвязь: ' + err.message);
-          }
-        } else {
-          addDebugInfo('Отсутствует offer для установки соединения при переподключении');
-          setError('Отсутствует offer для установки соединения');
+            })
+            .then(answer => {
+              // Устанавливаем локальное описание (answer)
+              return peerRef.current.setLocalDescription(answer)
+                .then(() => answer);
+            })
+            .then(answer => {
+              addDebugInfo('Local description (answer) установлен при переподключении');
+              
+              // Отправляем ответ клиенту
+              socketRef.current.emit('sos-answer', { answer, id });
+              addDebugInfo('Answer отправлен клиенту при переподключении');
+              
+              setConnectionStatus('Ожидание соединения после переподключения...');
+            })
+            .catch(err => {
+              addDebugInfo(`Ошибка при установке WebRTC соединения при переподключении: ${err.message}`);
+              setError('Не удалось установить видеосвязь: ' + err.message);
+            });
+        } catch (err) {
+          addDebugInfo(`Ошибка при обработке offer при переподключении: ${err.message}`);
+          setError('Не удалось установить видеосвязь: ' + err.message);
         }
-      });
-      
-      socketRef.current.on('connect_error', (err) => {
-        addDebugInfo(`Ошибка переподключения Socket.IO: ${err.message}`);
-        setError('Не удалось переподключиться к серверу: ' + err.message);
-      });
-      
-      // Обновляем данные вызова
-      setCall(response.data);
+      } else {
+        addDebugInfo('Отсутствует offer для установки соединения при переподключении');
+        setError('Отсутствует offer для установки соединения');
+      }
     }).catch(err => {
       addDebugInfo(`Ошибка при обновлении данных вызова: ${err.message}`);
       setError('Не удалось обновить данные вызова: ' + err.message);
@@ -797,16 +775,14 @@ const CallDetails = () => {
     
     socketRef.current.on('ice-candidate', async (candidate) => {
       try {
-        addDebugInfo('Получен ICE кандидат от клиента');
+        addDebugInfo(`Получен ICE кандидат от клиента`);
+        
         if (peerRef.current && peerRef.current.remoteDescription) {
           await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
           addDebugInfo('ICE кандидат успешно добавлен');
         } else {
-          addDebugInfo('Не удалось добавить ICE кандидата: нет remoteDescription');
-          // Сохраняем кандидата для последующего добавления
-          const pendingCandidates = pendingIceCandidatesRef.current || [];
-          pendingIceCandidatesRef.current = [...pendingCandidates, candidate];
-          addDebugInfo(`ICE кандидат сохранен (всего: ${pendingIceCandidatesRef.current.length})`);
+          addDebugInfo('Сохраняем ICE кандидат для последующего добавления');
+          pendingIceCandidatesRef.current.push(candidate);
         }
       } catch (err) {
         addDebugInfo(`Ошибка при добавлении ICE кандидата: ${err.message}`);
@@ -814,29 +790,39 @@ const CallDetails = () => {
     });
     
     socketRef.current.on('sos-canceled', () => {
-      setError('SOS вызов был отменен');
-      setTimeout(() => navigate('/'), 3000);
+      addDebugInfo('Вызов отменен клиентом');
+      setConnectionStatus('Вызов отменен');
+      
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
+      
+      setCall(prev => ({ ...prev, status: 'canceled' }));
     });
     
-    socketRef.current.on('sos-reconnect', async ({ offer, id: reconnectId }) => {
-      addDebugInfo(`Получен запрос на переподключение от клиента: ${reconnectId}`);
-      if (reconnectId === id) {
-        try {
-          // Обрабатываем запрос на переподключение
-          handleReconnectOffer(offer);
-        } catch (err) {
-          addDebugInfo(`Ошибка при переподключении: ${err.message}`);
-          setError('Не удалось переподключиться: ' + err.message);
-        }
+    socketRef.current.on('sos-reconnect', async ({ offer }) => {
+      try {
+        addDebugInfo('Получен запрос на переподключение');
+        await handleReconnectOffer(offer);
+      } catch (err) {
+        addDebugInfo(`Ошибка при обработке запроса на переподключение: ${err.message}`);
       }
     });
     
-    // Обработка пинга для поддержания соединения
-    socketRef.current.on('ping', () => {
-      socketRef.current.emit('pong');
+    socketRef.current.on('sos-offer', async ({ offer }) => {
+      try {
+        addDebugInfo('Получен новый offer от клиента');
+        await handleReconnectOffer(offer);
+      } catch (err) {
+        addDebugInfo(`Ошибка при обработке нового offer: ${err.message}`);
+      }
     });
     
-    // Обработка отключения сокета
+    socketRef.current.on('ping', () => {
+      socketRef.current.emit('pong');
+      addDebugInfo('Получен ping, отправлен pong');
+    });
+    
     socketRef.current.on('disconnect', (reason) => {
       addDebugInfo(`Socket.IO отключен: ${reason}`);
       if (reason === 'io server disconnect' || reason === 'transport close') {
@@ -846,7 +832,6 @@ const CallDetails = () => {
       }
     });
     
-    // Обработка ошибок
     socketRef.current.on('error', (error) => {
       addDebugInfo(`Socket.IO ошибка: ${error.message}`);
     });
@@ -937,106 +922,111 @@ const CallDetails = () => {
   // Обработка offer при переподключении
   const handleReconnectOffer = async (offer) => {
     try {
-      addDebugInfo('Начало обработки запроса на переподключение');
+      addDebugInfo('Получен запрос на переподключение с новым offer');
       
-      // Закрываем текущее соединение
+      // Проверяем состояние соединения
       if (peerRef.current) {
-        peerRef.current.close();
-      }
-      
-      // Очищаем список обработанных треков
-      processedTracksRef.current.clear();
-      
-      // Очищаем видеоэлемент
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = videoRef.current.srcObject.getTracks();
-        tracks.forEach(track => {
-          track.stop();
-          addDebugInfo(`Трек ${track.kind} остановлен при переподключении`);
-        });
-        videoRef.current.srcObject = null;
-      }
-      
-      // Сбрасываем состояния
-      setHasVideo(false);
-      setHasAudio(false);
-      setConnectionStatus('Переподключение...');
-      setAutoplayBlocked(false);
-      
-      // Создаем новое соединение с улучшенными параметрами
-      peerRef.current = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { 
-            urls: 'turn:numb.viagenie.ca',
-            username: 'webrtc@live.com',
-            credential: 'muazkh'
-          },
-          {
-            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          }
-        ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'all'
-      });
-      
-      // Настраиваем обработчики событий
-      setupPeerHandlers();
-      
-      // Устанавливаем удаленное описание
-      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      addDebugInfo('Remote description установлен при переподключении');
-      
-      // Добавляем сохраненные ICE кандидаты, если они есть
-      if (pendingIceCandidatesRef.current && pendingIceCandidatesRef.current.length > 0) {
-        addDebugInfo(`Добавление ${pendingIceCandidatesRef.current.length} сохраненных ICE кандидатов при переподключении`);
-        for (const candidate of pendingIceCandidatesRef.current) {
-          try {
-            await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-            addDebugInfo('Сохраненный ICE кандидат успешно добавлен при переподключении');
-          } catch (err) {
-            addDebugInfo(`Ошибка при добавлении сохраненного ICE кандидата при переподключении: ${err.message}`);
-          }
-        }
-        pendingIceCandidatesRef.current = [];
-      }
-      
-      // Создаем ответ
-      const answer = await peerRef.current.createAnswer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true
-      });
-      
-      // Устанавливаем локальное описание
-      await peerRef.current.setLocalDescription(answer);
-      addDebugInfo('Local description (answer) установлен при переподключении');
-      
-      // Отправляем ответ клиенту
-      socketRef.current.emit('sos-answer', { answer, id });
-      addDebugInfo('Answer отправлен клиенту после переподключения');
-      
-      setConnectionStatus('Ожидание соединения после переподключения...');
-      
-      // Проверяем состояние соединения через некоторое время
-      setTimeout(() => {
-        if (peerRef.current) {
-          const state = peerRef.current.iceConnectionState;
-          addDebugInfo(`Проверка состояния ICE после переподключения: ${state}`);
+        const currentState = peerRef.current.signalingState;
+        addDebugInfo(`Текущее состояние сигнализации: ${currentState}`);
+        
+        // Если мы в состоянии stable, нужно сбросить соединение перед установкой нового offer
+        if (currentState === 'stable') {
+          addDebugInfo('Сброс соединения в состоянии stable перед установкой нового offer');
           
-          if (state !== 'connected' && state !== 'completed') {
-            addDebugInfo('Соединение не установлено после переподключения, пробуем снова');
-            handleReconnect();
-          }
+          // Закрываем текущее соединение и создаем новое
+          peerRef.current.close();
+          
+          peerRef.current = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { 
+                urls: 'turn:numb.viagenie.ca',
+                username: 'webrtc@live.com',
+                credential: 'muazkh'
+              },
+              {
+                urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+                username: 'webrtc',
+                credential: 'webrtc'
+              }
+            ],
+            iceCandidatePoolSize: 10,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
+            iceTransportPolicy: 'all'
+          });
+          
+          // Настраиваем обработчики для WebRTC
+          setupPeerHandlers();
         }
-      }, 10000);
+        
+        // Устанавливаем удаленное описание (offer)
+        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+        addDebugInfo('Remote description (offer) установлен при переподключении');
+        
+        // Создаем ответ
+        const answer = await peerRef.current.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
+        
+        // Устанавливаем локальное описание (answer)
+        await peerRef.current.setLocalDescription(answer);
+        addDebugInfo('Local description (answer) установлен при переподключении');
+        
+        // Отправляем ответ клиенту
+        socketRef.current.emit('sos-answer', { answer, id });
+        addDebugInfo('Answer отправлен клиенту при переподключении');
+      } else {
+        addDebugInfo('Ошибка: peerRef.current отсутствует при получении запроса на переподключение');
+        
+        // Создаем новое WebRTC соединение
+        peerRef.current = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun1.l.google.com:19302' },
+            { 
+              urls: 'turn:numb.viagenie.ca',
+              username: 'webrtc@live.com',
+              credential: 'muazkh'
+            },
+            {
+              urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+              username: 'webrtc',
+              credential: 'webrtc'
+            }
+          ],
+          iceCandidatePoolSize: 10,
+          bundlePolicy: 'max-bundle',
+          rtcpMuxPolicy: 'require',
+          iceTransportPolicy: 'all'
+        });
+        
+        // Настраиваем обработчики для WebRTC
+        setupPeerHandlers();
+        
+        // Устанавливаем удаленное описание (offer)
+        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+        addDebugInfo('Remote description (offer) установлен при переподключении');
+        
+        // Создаем ответ
+        const answer = await peerRef.current.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
+        
+        // Устанавливаем локальное описание (answer)
+        await peerRef.current.setLocalDescription(answer);
+        addDebugInfo('Local description (answer) установлен при переподключении');
+        
+        // Отправляем ответ клиенту
+        socketRef.current.emit('sos-answer', { answer, id });
+        addDebugInfo('Answer отправлен клиенту при переподключении');
+      }
     } catch (err) {
-      addDebugInfo(`Ошибка при переподключении: ${err.message}`);
-      throw err;
+      addDebugInfo(`Ошибка при обработке запроса на переподключение: ${err.message}`);
+      setError('Не удалось переподключиться: ' + err.message);
     }
   };
 
