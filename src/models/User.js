@@ -12,6 +12,11 @@ const userSchema = new mongoose.Schema({
     unique: true,
     match: [/^\+\d{11,15}$/, 'Неправильный формат телефона']
   },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
   passwordHash: {
     type: String,
     required: true,

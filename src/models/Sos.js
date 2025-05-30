@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 
 const sosSchema = new mongoose.Schema({
   phone:     String,
+  userName:  String,
   latitude:  Number,
   longitude: Number,
   offer:     Object,

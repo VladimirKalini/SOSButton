@@ -7,6 +7,7 @@ const authRoutes = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
 const Sos = require('./src/models/Sos');
 const fs = require('fs');
+const User = require('./src/models/User');
 
 // Создание директории для загрузки видео
 const uploadsDir = path.join(__dirname, 'uploads/videos');
@@ -182,8 +183,12 @@ io.on('connection', socket => {
         }
       }
       
+      // Находим пользователя по номеру телефона для получения имени
+      const user = await User.findOne({ phone });
+      const userName = user ? user.name : 'Неизвестный пользователь';
+      
       // Создание нового SOS вызова
-      const doc = new Sos({ phone, latitude, longitude, offer });
+      const doc = new Sos({ phone, userName, latitude, longitude, offer });
       await doc.save();
       doc.sosId = doc._id.toString();
       await doc.save();
@@ -208,11 +213,12 @@ io.on('connection', socket => {
         latitude,
         longitude,
         phone,
+        userName,
         id: doc.sosId,
         createdAt: doc.createdAt
       });
       
-      logWithTime(`Оповещение о новом SOS отправлено охране: ${phone}, ID: ${doc.sosId}`);
+      logWithTime(`Оповещение о новом SOS отправлено охране: ${userName} (${phone}), ID: ${doc.sosId}`);
     } catch (err) {
       logWithTime(`Ошибка при обработке SOS offer: ${err.message}`);
       socket.emit('error', { message: 'Не удалось сохранить SOS сигнал' });

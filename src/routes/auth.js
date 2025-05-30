@@ -8,7 +8,8 @@ const router = express.Router();
 
 const registerSchema = Joi.object({
   phone: Joi.string().pattern(/^\+\d{11,15}$/).required(),
-  password: Joi.string().min(6).required()
+  password: Joi.string().min(6).required(),
+  name: Joi.string().required().trim()
 });
 
 const loginSchema = Joi.object({
@@ -20,13 +21,13 @@ router.post('/register', async (req, res) => {
   const { error, value } = registerSchema.validate(req.body);
   if (error) return res.status(400).json({ message: error.details[0].message });
 
-  const { phone, password } = value;
+  const { phone, password, name } = value;
   if (await User.findOne({ phone })) {
     return res.status(409).json({ message: 'Этот номер уже зарегистрирован' });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  await new User({ phone, passwordHash }).save();
+  await new User({ phone, passwordHash, name }).save();
   res.status(201).json({ message: 'Пользователь зарегистрирован' });
 });
 
@@ -46,14 +47,14 @@ router.post('/login', async (req, res) => {
   }
 
   const token = jwt.sign(
-    { userId: user._id, phone: user.phone, role: user.role },
+    { userId: user._id, phone: user.phone, role: user.role, name: user.name },
     process.env.JWT_SECRET || 'very_secret_key',
     { expiresIn: '7d' }
   );
 
   res.json({
     token,
-    user: { id: user._id, phone: user.phone, role: user.role }
+    user: { id: user._id, phone: user.phone, role: user.role, name: user.name }
   });
 });
 

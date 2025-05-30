@@ -89,6 +89,7 @@ const styles = {
 
 export default function Register() {
   const [phone, setPhone] = useState('');
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -103,6 +104,12 @@ export default function Register() {
   const handleRegister = async () => {
     setError('');
     setSuccess('');
+
+    // Проверка имени
+    if (!name.trim()) {
+      setError('Имя не может быть пустым');
+      return;
+    }
 
     // Проверка телефона
     if (!validatePhone(phone)) {
@@ -124,7 +131,7 @@ export default function Register() {
 
     setLoading(true);
     try {
-      await axios.post('/api/register', { phone, password });
+      await axios.post('/api/register', { phone, password, name });
       setSuccess('Регистрация успешна! Теперь вы можете войти.');
       setTimeout(() => {
         navigate('/login');
@@ -150,6 +157,17 @@ export default function Register() {
         <h2 style={styles.header}>Регистрация</h2>
         {error && <div style={styles.error}>{error}</div>}
         {success && <div style={styles.success}>{success}</div>}
+        <div style={styles.field}>
+          <label style={styles.label}>Имя</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Введите ваше имя"
+            required
+            style={styles.input}
+          />
+        </div>
         <div style={styles.field}>
           <label style={styles.label}>Телефон</label>
           <input

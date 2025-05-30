@@ -1,9 +1,10 @@
 // src/components/guard/GuardDashboard.jsx
-import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../authContext';
 import { io } from 'socket.io-client';
+import { requestNotificationPermission, showIncomingCallOverlay } from '../services/notificationService';
 
 const GuardDashboard = () => {
   const [activeCalls, setActiveCalls] = useState([]);
@@ -12,9 +13,35 @@ const GuardDashboard = () => {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('active');
   const [page, setPage] = useState(1);
-  const { token } = useAuth();
+  const { token, logout } = useAuth();
   const serverUrl = 'https://1fxpro.vip';
   const [notification, setNotification] = useState({ show: false, message: '', type: '' });
+  const audioRef = useRef(null);
+  const [isSirenPlaying, setIsSirenPlaying] = useState(false);
+  const navigate = useNavigate();
+  const overlayCloseRef = useRef(null);
+
+  useEffect(() => {
+    // Запрашиваем разрешение на уведомления при загрузке компонента
+    requestNotificationPermission();
+    
+    // Создаем аудио элемент для сирены
+    audioRef.current = new Audio('/siren.mp3');
+    audioRef.current.loop = true;
+    
+    return () => {
+      // Останавливаем звук при размонтировании компонента
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      
+      // Закрываем оверлей, если он открыт
+      if (overlayCloseRef.current) {
+        overlayCloseRef.current();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const socket = io(serverUrl, { 
@@ -28,14 +55,60 @@ const GuardDashboard = () => {
 
     socket.on('incoming-sos', (data) => {
       setActiveCalls(prev => [data, ...prev]);
+      
+      // Проигрываем сирену при получении нового вызова
+      if (audioRef.current) {
+        audioRef.current.play()
+          .then(() => setIsSirenPlaying(true))
+          .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+      }
+      
+      // Показываем оверлей с уведомлением
+      if (overlayCloseRef.current) {
+        overlayCloseRef.current(); // Закрываем предыдущий оверлей, если он есть
+      }
+      
+      overlayCloseRef.current = showIncomingCallOverlay(
+        data,
+        () => navigate(`/call/${data.id || data._id}`), // При принятии вызова переходим на страницу вызова
+        () => handleCancelCall(data.id || data._id) // При отклонении отменяем вызов
+      );
     });
 
     socket.on('sos-canceled', ({ id }) => {
       setActiveCalls(prev => prev.filter(call => call.id !== id));
+      
+      // Если это был последний активный вызов, останавливаем сирену
+      if (activeCalls.length <= 1 && audioRef.current && isSirenPlaying) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        setIsSirenPlaying(false);
+      }
+      
+      // Закрываем оверлей, если он открыт
+      if (overlayCloseRef.current) {
+        overlayCloseRef.current();
+        overlayCloseRef.current = null;
+      }
     });
 
     return () => socket.disconnect();
-  }, [token, serverUrl]);
+  }, [token, serverUrl, navigate, activeCalls.length, isSirenPlaying]);
+
+  // Функция для остановки сирены
+  const stopSiren = () => {
+    if (audioRef.current && isSirenPlaying) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setIsSirenPlaying(false);
+    }
+    
+    // Закрываем оверлей, если он открыт
+    if (overlayCloseRef.current) {
+      overlayCloseRef.current();
+      overlayCloseRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const fetchActiveCalls = async () => {
@@ -108,6 +181,13 @@ const GuardDashboard = () => {
       
       // Обновляем список активных вызовов
       setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
+      
+      // Останавливаем сирену, если это был единственный активный вызов
+      if (activeCalls.length <= 1 && audioRef.current && isSirenPlaying) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        setIsSirenPlaying(false);
+      }
       
       // Показываем уведомление об успешной отмене
       setNotification({
@@ -209,22 +289,49 @@ const GuardDashboard = () => {
           color: '#343a40',
           fontSize: '1.75rem'
         }}>Панель охраны</h2>
-        <button 
-          onClick={handleLogout} 
-          style={{ 
-            padding: '0.75rem 1.5rem', 
-            backgroundColor: '#dc3545', 
-            color: 'white', 
-            border: 'none',
-            borderRadius: '0.5rem',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            boxShadow: '0 2px 4px rgba(220, 53, 69, 0.2)',
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Выйти
-        </button>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          {isSirenPlaying && (
+            <button 
+              onClick={stopSiren} 
+              style={{ 
+                padding: '0.75rem 1.5rem', 
+                backgroundColor: '#ffc107', 
+                color: '#212529', 
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                boxShadow: '0 2px 4px rgba(255, 193, 7, 0.2)',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
+                <path d="M10.121 12.596A6.48 6.48 0 0 0 12.025 8a6.48 6.48 0 0 0-1.904-4.596l-.707.707A5.483 5.483 0 0 1 11.025 8a5.483 5.483 0 0 1-1.61 3.89l.706.706z"/>
+                <path d="M8.707 11.182A4.486 4.486 0 0 0 10.025 8a4.486 4.486 0 0 0-1.318-3.182L8 5.525A3.489 3.489 0 0 1 9.025 8 3.49 3.49 0 0 1 8 10.475l.707.707z"/>
+                <path d="M6.717 3.55A.5.5 0 0 1 7 4v8a.5.5 0 0 1-.812.39L3.825 10.5H1.5A.5.5 0 0 1 1 10V6a.5.5 0 0 1 .5-.5h2.325l2.363-1.89a.5.5 0 0 1 .529-.06z"/>
+              </svg>
+              Остановить сирену
+            </button>
+          )}
+          <button 
+            onClick={handleLogout} 
+            style={{ 
+              padding: '0.75rem 1.5rem', 
+              backgroundColor: '#dc3545', 
+              color: 'white', 
+              border: 'none',
+              borderRadius: '0.5rem',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              boxShadow: '0 2px 4px rgba(220, 53, 69, 0.2)',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            Выйти
+          </button>
+        </div>
       </div>
 
       {/* Уведомление */}
@@ -399,7 +506,7 @@ const GuardDashboard = () => {
                         <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
                         <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
                       </svg>
-                      {call.phone}
+                      {call.userName || 'Неизвестный'} ({call.phone})
                     </div>
                     <div style={{
                       backgroundColor: '#e9ecef',
