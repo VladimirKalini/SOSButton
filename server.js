@@ -5,9 +5,11 @@ const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const authRoutes = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
+const pushRoutes = require('./server/routes/push');
 const Sos = require('./src/models/Sos');
 const fs = require('fs');
 const User = require('./src/models/User');
+const notificationService = require('./server/services/notificationService');
 
 // Создание директории для загрузки видео
 const uploadsDir = path.join(__dirname, 'uploads/videos');
@@ -61,11 +63,15 @@ const io = new Server(httpServer, {
 // Сохраняем экземпляр io для использования в маршрутах
 app.set('io', io);
 
+// Инициализируем сервис уведомлений
+notificationService.init();
+
 // Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/api', authRoutes);
 app.use('/api/calls', callsRoutes);
+app.use('/api/push', pushRoutes);
 
 // Добавляем маршрут для проверки статуса сервера
 app.get('/api/status', (req, res) => {
@@ -207,8 +213,8 @@ io.on('connection', socket => {
         socketId: socket.id 
       });
       
-      // Оповещение охраны о новом вызове
-      socket.to('guard').emit('incoming-sos', {
+      // Данные для отправки уведомлений и оповещения охраны
+      const sosData = {
         offer,
         latitude,
         longitude,
@@ -216,7 +222,18 @@ io.on('connection', socket => {
         userName,
         id: doc.sosId,
         createdAt: doc.createdAt
-      });
+      };
+      
+      // Оповещение охраны о новом вызове через сокеты
+      socket.to('guard').emit('incoming-sos', sosData);
+      
+      // Отправляем push-уведомления всем охранникам
+      try {
+        const sentCount = await notificationService.sendSOSNotificationToGuards(sosData);
+        logWithTime(`Отправлено ${sentCount} push-уведомлений охранникам`);
+      } catch (notifyError) {
+        logWithTime(`Ошибка при отправке push-уведомлений: ${notifyError.message}`);
+      }
       
       logWithTime(`Оповещение о новом SOS отправлено охране: ${userName} (${phone}), ID: ${doc.sosId}`);
     } catch (err) {

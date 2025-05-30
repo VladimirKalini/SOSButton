@@ -4,13 +4,64 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Оффлайн</title>
+  <title>SOS App - Нет соединения</title>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 2rem; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background-color: #f8f9fa;
+      text-align: center;
+      padding: 20px;
+    }
+    .container {
+      max-width: 500px;
+      padding: 40px;
+      background-color: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      color: #dc3545;
+      margin-top: 0;
+    }
+    p {
+      color: #6c757d;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .icon {
+      font-size: 64px;
+      margin-bottom: 20px;
+    }
+    .btn {
+      display: inline-block;
+      background-color: #dc3545;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 50px;
+      text-decoration: none;
+      font-weight: bold;
+      margin-top: 20px;
+      transition: background-color 0.3s;
+    }
+    .btn:hover {
+      background-color: #c82333;
+    }
   </style>
 </head>
 <body>
-  <h1>Вы офлайн 📴</h1>
-  <p>Проверьте соединение или попробуйте позднее.</p>
+  <div class="container">
+    <div class="icon">📡</div>
+    <h1>Нет подключения к интернету</h1>
+    <p>Для работы приложения SOS требуется подключение к интернету. Пожалуйста, проверьте ваше соединение и попробуйте снова.</p>
+    <p>Если вам нужна экстренная помощь, позвоните по номеру 112.</p>
+    <a href="/" class="btn">Обновить страницу</a>
+  </div>
 </body>
 </html>

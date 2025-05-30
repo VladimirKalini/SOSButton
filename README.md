@@ -1,70 +1,67 @@
-# Getting Started with Create React App
+# SOS Button App
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Приложение для экстренных вызовов охраны с поддержкой WebRTC и Push-уведомлений.
 
-## Available Scripts
+## Настройка Push-уведомлений
 
-In the project directory, you can run:
+Для работы push-уведомлений необходимо выполнить следующие шаги:
 
-### `npm start`
+1. Установить необходимые зависимости:
+   ```bash
+   npm install web-push uuid --save
+   ```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+2. Сгенерировать VAPID ключи:
+   ```bash
+   node server/generateVapidKeys.js
+   ```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+3. Полученные ключи добавить в переменные окружения:
+   ```
+   VAPID_PUBLIC_KEY=ваш_публичный_ключ
+   VAPID_PRIVATE_KEY=ваш_приватный_ключ
+   VAPID_EMAIL=mailto:your-email@example.com
+   ```
+   
+   Или обновить их напрямую в файле `server/services/notificationService.js`
 
-### `npm test`
+4. Заменить заглушки файлов на реальные:
+   - `public/icons/sos-icon-192.png` - иконка для push-уведомлений (192x192 px)
+   - `public/icons/sos-badge-96.png` - иконка-бейдж для push-уведомлений (96x96 px)
+   - `public/siren.mp3` - звук сирены для уведомлений
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+5. Перезапустить сервер:
+   ```bash
+   npm run start:server
+   ```
 
-### `npm run build`
+## Структура проекта
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### Клиентская часть (React)
+- `src/services/pushService.js` - сервис для работы с подписками на push-уведомления
+- `src/services/notificationService.js` - сервис для работы с уведомлениями на клиенте
+- `src/components/GuardDashboard.jsx` - панель охраны с поддержкой push-уведомлений
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Серверная часть (Express)
+- `server/services/notificationService.js` - сервис для отправки push-уведомлений
+- `server/models/PushSubscription.js` - модель для хранения подписок
+- `server/routes/push.js` - API маршруты для работы с push-уведомлениями
+- `server/middleware/auth.js` - middleware для аутентификации
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### Service Worker
+- `public/sw.js` - сервис-воркер с поддержкой push-уведомлений и оффлайн-режима
 
-### `npm run eject`
+## Тестирование push-уведомлений
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+1. Войдите в систему как охранник
+2. Предоставьте разрешение на показ уведомлений в браузере
+3. Нажмите кнопку "Тест Push" на панели охраны
+4. Должно появиться уведомление с звуковым сигналом
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## Особенности реализации
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- Поддерживается сохранение сессии на устройстве (persist login)
+- Адаптивная верстка для мобильных устройств
+- Звуковое оповещение при получении SOS-вызова
+- Оверлей с информацией о вызове
+- Возможность принять или отклонить вызов прямо из уведомления

@@ -11,6 +11,8 @@ const ASSETS = [
   '/logo192.png',
   '/logo512.png',
   '/siren.mp3',
+  '/icons/sos-icon-192.png',
+  '/icons/sos-badge-96.png',
   // Основные статические файлы React (замените на реальные имена из build)
   '/static/js/bundle.js',
   '/static/js/main.js',
@@ -72,13 +74,26 @@ let audioPlayer = null;
 
 // Обработка push-уведомлений
 self.addEventListener('push', event => {
-  const data = event.data.json();
+  let data;
+  try {
+    data = event.data.json();
+  } catch (e) {
+    data = {
+      title: 'SOS Сигнал',
+      body: 'Получен новый SOS-вызов!',
+      data: {
+        url: '/',
+        soundName: 'siren.mp3'
+      }
+    };
+  }
+
   const options = {
     body: data.body || 'SOS вызов!',
-    icon: '/logo192.png',
-    vibrate: [200, 100, 200, 100, 200],
-    badge: '/logo192.png',
-    tag: 'sos-notification',
+    icon: data.icon || '/icons/sos-icon-192.png',
+    vibrate: data.vibrate || [300, 100, 300],
+    badge: data.badge || '/icons/sos-badge-96.png',
+    tag: data.tag || 'sos-call',
     requireInteraction: true,
     renotify: true,
     actions: [
@@ -86,16 +101,14 @@ self.addEventListener('push', event => {
       { action: 'decline', title: 'Отклонить' }
     ],
     data: {
-      url: data.url || '/',
+      url: data.data?.url || '/',
+      callId: data.data?.callId,
+      phone: data.data?.phone,
+      userName: data.data?.userName,
       fullScreenIntent: true,
-      soundName: 'siren.mp3'
+      soundName: data.data?.soundName || 'siren.mp3'
     }
   };
-
-  // Для Android добавляем полноэкранное намерение
-  if (data.data && data.data.fullScreenIntent) {
-    options.data.fullScreenIntent = true;
-  }
 
   // Показываем уведомление
   event.waitUntil(
@@ -136,7 +149,14 @@ self.addEventListener('notificationclick', event => {
         // Если есть открытое окно, фокусируемся на нем
         for (const client of clientList) {
           if (client.url.includes(self.registration.scope) && 'focus' in client) {
-            client.postMessage({ action: 'accept-sos', data: data });
+            client.postMessage({ 
+              action: 'accept-sos', 
+              data: {
+                callId: data.callId,
+                phone: data.phone,
+                userName: data.userName
+              } 
+            });
             return client.focus();
           }
         }
@@ -153,7 +173,14 @@ self.addEventListener('notificationclick', event => {
       self.clients.matchAll({ type: 'window' }).then(clientList => {
         for (const client of clientList) {
           if (client.url.includes(self.registration.scope)) {
-            client.postMessage({ action: 'decline-sos', data: data });
+            client.postMessage({ 
+              action: 'decline-sos', 
+              data: {
+                callId: data.callId,
+                phone: data.phone,
+                userName: data.userName
+              } 
+            });
           }
         }
       })

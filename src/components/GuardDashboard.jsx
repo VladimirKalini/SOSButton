@@ -11,6 +11,10 @@ import {
   stopSiren, 
   initAudioContext 
 } from '../services/notificationService';
+import { 
+  subscribeToPushNotifications,
+  isPushSupported
+} from '../services/pushService';
 
 const GuardDashboard = () => {
   const [activeCalls, setActiveCalls] = useState([]);
@@ -28,6 +32,8 @@ const GuardDashboard = () => {
   const overlayCloseRef = useRef(null);
   const socketRef = useRef(null);
   const activeCallsRef = useRef([]);
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
 
   // Обновляем ref при изменении activeCalls
   useEffect(() => {
@@ -36,7 +42,27 @@ const GuardDashboard = () => {
 
   useEffect(() => {
     // Запрашиваем разрешение на уведомления при загрузке компонента
-    requestNotificationPermission();
+    requestNotificationPermission().then(granted => {
+      if (granted) {
+        // Проверяем поддержку Push API
+        const supported = isPushSupported();
+        setPushSupported(supported);
+        
+        if (supported) {
+          // Подписываемся на push-уведомления
+          subscribeToPushNotifications()
+            .then(subscription => {
+              if (subscription) {
+                setPushEnabled(true);
+                console.log('Успешно подписались на push-уведомления');
+              }
+            })
+            .catch(err => {
+              console.error('Ошибка при подписке на push-уведомления:', err);
+            });
+        }
+      }
+    });
     
     // Инициализируем аудио-контекст для лучшей работы на мобильных устройствах
     initAudioContext().catch(err => console.error('Ошибка инициализации аудио:', err));
@@ -64,16 +90,48 @@ const GuardDashboard = () => {
     
     if (action === 'accept-sos') {
       // Находим вызов по ID или другим данным
-      const callId = data.id || data.callId;
+      const callId = data.callId || data.id;
       if (callId) {
         navigate(`/call/${callId}`);
       }
     } else if (action === 'decline-sos') {
       // Находим вызов по ID или другим данным
-      const callId = data.id || data.callId;
+      const callId = data.callId || data.id;
       if (callId) {
         handleCancelCall(callId);
       }
+    }
+  };
+
+  // Функция для отправки тестового push-уведомления
+  const sendTestPushNotification = async () => {
+    try {
+      const response = await axios.post('/api/push/test-notification', {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      setNotification({
+        show: true,
+        message: `Тестовое уведомление отправлено (${response.data.sentCount})`,
+        type: 'success'
+      });
+      
+      // Скрываем уведомление через 3 секунды
+      setTimeout(() => {
+        setNotification({ show: false, message: '', type: '' });
+      }, 3000);
+    } catch (error) {
+      console.error('Ошибка при отправке тестового уведомления:', error);
+      setNotification({
+        show: true,
+        message: 'Ошибка при отправке тестового уведомления',
+        type: 'error'
+      });
+      
+      // Скрываем уведомление через 3 секунды
+      setTimeout(() => {
+        setNotification({ show: false, message: '', type: '' });
+      }, 3000);
     }
   };
 
@@ -207,23 +265,29 @@ const GuardDashboard = () => {
 
   const handleCancelCall = async (id) => {
     try {
-      await axios.delete(`/api/calls/${id}/cancel`, {
+      await axios.post(`/api/calls/cancel/${id}`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      // Обновляем список активных вызовов
+      // Удаляем вызов из списка активных
       setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
       
-      // Останавливаем сирену, если это был единственный активный вызов
+      // Если это был последний активный вызов, останавливаем сирену
       if (activeCallsRef.current.length <= 1) {
         stopSiren();
         setIsSirenPlaying(false);
       }
       
+      // Закрываем оверлей, если он открыт
+      if (overlayCloseRef.current) {
+        overlayCloseRef.current();
+        overlayCloseRef.current = null;
+      }
+      
       // Показываем уведомление об успешной отмене
       setNotification({
         show: true,
-        message: 'Вызов успешно отменен',
+        message: 'Вызов отменен',
         type: 'success'
       });
       
@@ -235,9 +299,11 @@ const GuardDashboard = () => {
       console.error('Ошибка при отмене вызова:', err);
       setNotification({
         show: true,
-        message: 'Не удалось отменить вызов',
+        message: 'Ошибка при отмене вызова',
         type: 'error'
       });
+      
+      // Скрываем уведомление через 3 секунды
       setTimeout(() => {
         setNotification({ show: false, message: '', type: '' });
       }, 3000);
@@ -245,573 +311,331 @@ const GuardDashboard = () => {
   };
 
   const handleLogout = () => {
-    // Implement the logout logic here
+    logout();
+    navigate('/login');
   };
 
-  // Функция для принудительного обновления истории вызовов
+  // Функция для обновления истории вызовов
   const refreshHistory = () => {
     if (activeTab === 'history') {
-      addDebugInfo('Принудительное обновление истории вызовов');
-      setLoading(true);
-      setError('');
-      
-      const timestamp = new Date().getTime();
-      axios.get(`/api/calls/history?_t=${timestamp}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(response => {
-          if (response.data && Array.isArray(response.data)) {
-            setCallHistory(response.data);
-            addDebugInfo(`Обновлено ${response.data.length} записей истории вызовов`);
-            
-            // Показываем уведомление об успешном обновлении
-            setNotification({
-              show: true,
-              message: 'История вызовов успешно обновлена',
-              type: 'success'
-            });
-            
-            // Скрываем уведомление через 3 секунды
-            setTimeout(() => {
-              setNotification({ show: false, message: '', type: '' });
-            }, 3000);
-          } else {
-            setCallHistory([]);
-            addDebugInfo('История вызовов пуста или имеет неверный формат');
-          }
-        })
-        .catch(err => {
-          console.error('Ошибка обновления истории вызовов:', err);
-          setError('Не удалось обновить историю вызовов');
-          addDebugInfo(`Ошибка обновления истории: ${err.response?.status || 'неизвестная ошибка'}`);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
+      setActiveTab('active');
+      setTimeout(() => {
+        setActiveTab('history');
+      }, 100);
+    }
+  };
+
+  // Определяем стили для адаптивной вёрстки
+  const styles = {
+    container: {
+      padding: '16px',
+      maxWidth: '1200px',
+      margin: '0 auto',
+      boxSizing: 'border-box',
+      width: '100%'
+    },
+    header: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      marginBottom: '16px',
+      gap: '10px'
+    },
+    title: {
+      fontSize: 'clamp(1.5rem, 4vw, 2rem)',
+      margin: '0',
+      flex: '1'
+    },
+    tabs: {
+      display: 'flex',
+      marginBottom: '16px',
+      borderBottom: '1px solid #ddd',
+      overflowX: 'auto',
+      width: '100%'
+    },
+    tab: {
+      padding: '10px 20px',
+      cursor: 'pointer',
+      backgroundColor: 'transparent',
+      border: 'none',
+      borderBottom: '2px solid transparent',
+      fontSize: 'clamp(0.875rem, 3vw, 1rem)',
+      whiteSpace: 'nowrap'
+    },
+    activeTab: {
+      borderBottom: '2px solid #3182ce',
+      fontWeight: 'bold',
+      color: '#3182ce'
+    },
+    callList: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+      gap: '16px',
+      marginTop: '16px'
+    },
+    callCard: {
+      border: '1px solid #ddd',
+      borderRadius: '8px',
+      padding: '16px',
+      backgroundColor: '#fff',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+      display: 'flex',
+      flexDirection: 'column'
+    },
+    callInfo: {
+      marginBottom: '16px'
+    },
+    callActions: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      marginTop: 'auto'
+    },
+    button: {
+      padding: '8px 16px',
+      borderRadius: '4px',
+      border: 'none',
+      cursor: 'pointer',
+      fontSize: 'clamp(0.75rem, 2.5vw, 0.875rem)',
+      fontWeight: '600',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '8px'
+    },
+    primaryButton: {
+      backgroundColor: '#3182ce',
+      color: '#fff'
+    },
+    dangerButton: {
+      backgroundColor: '#e53e3e',
+      color: '#fff'
+    },
+    secondaryButton: {
+      backgroundColor: '#718096',
+      color: '#fff'
+    },
+    loadingContainer: {
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: '200px'
+    },
+    errorMessage: {
+      color: '#e53e3e',
+      padding: '16px',
+      textAlign: 'center'
+    },
+    notification: {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      padding: '12px 16px',
+      borderRadius: '4px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+      zIndex: 1000,
+      maxWidth: '300px',
+      animation: 'fadeIn 0.3s ease'
+    },
+    successNotification: {
+      backgroundColor: '#48bb78',
+      color: '#fff'
+    },
+    errorNotification: {
+      backgroundColor: '#e53e3e',
+      color: '#fff'
+    },
+    emptyState: {
+      textAlign: 'center',
+      padding: '40px 20px',
+      color: '#718096'
+    },
+    sirenControl: {
+      display: 'flex',
+      alignItems: 'center',
+      marginLeft: '16px'
+    },
+    // Медиа-запросы для мобильных устройств
+    '@media (max-width: 768px)': {
+      header: {
+        flexDirection: 'column',
+        alignItems: 'flex-start'
+      },
+      callList: {
+        gridTemplateColumns: '1fr'
+      },
+      callCard: {
+        padding: '12px'
+      },
+      callActions: {
+        flexDirection: 'column',
+        gap: '8px'
+      },
+      button: {
+        width: '100%'
+      }
     }
   };
 
   return (
-    <div style={{ 
-      padding: '1.5rem',
-      maxWidth: '1200px',
-      margin: '0 auto',
-      backgroundColor: '#f8f9fa',
-      minHeight: '100vh'
-    }}>
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        marginBottom: '2rem',
-        padding: '1rem',
-        backgroundColor: 'white',
-        borderRadius: '0.75rem',
-        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-      }}>
-        <h2 style={{ 
-          margin: 0, 
-          color: '#343a40',
-          fontSize: '1.75rem'
-        }}>Панель охраны</h2>
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          {isSirenPlaying && (
+    <div style={styles.container}>
+      {/* Уведомление */}
+      {notification.show && (
+        <div 
+          style={{
+            ...styles.notification,
+            ...(notification.type === 'success' ? styles.successNotification : styles.errorNotification)
+          }}
+        >
+          {notification.message}
+        </div>
+      )}
+
+      <div style={styles.header}>
+        <h1 style={styles.title}>Панель охраны</h1>
+        
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Кнопка для тестирования push-уведомлений */}
+          {pushSupported && (
             <button 
-              onClick={stopSirenSound} 
-              style={{ 
-                padding: '0.75rem 1.5rem', 
-                backgroundColor: '#ffc107', 
-                color: '#212529', 
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                boxShadow: '0 2px 4px rgba(255, 193, 7, 0.2)',
-                transition: 'all 0.2s ease'
-              }}
+              style={{ ...styles.button, ...styles.secondaryButton }}
+              onClick={sendTestPushNotification}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                <path d="M10.121 12.596A6.48 6.48 0 0 0 12.025 8a6.48 6.48 0 0 0-1.904-4.596l-.707.707A5.483 5.483 0 0 1 11.025 8a5.483 5.483 0 0 1-1.61 3.89l.706.706z"/>
-                <path d="M8.707 11.182A4.486 4.486 0 0 0 10.025 8a4.486 4.486 0 0 0-1.318-3.182L8 5.525A3.489 3.489 0 0 1 9.025 8 3.49 3.49 0 0 1 8 10.475l.707.707z"/>
-                <path d="M6.717 3.55A.5.5 0 0 1 7 4v8a.5.5 0 0 1-.812.39L3.825 10.5H1.5A.5.5 0 0 1 1 10V6a.5.5 0 0 1 .5-.5h2.325l2.363-1.89a.5.5 0 0 1 .529-.06z"/>
-              </svg>
-              Остановить сирену
+              Тест Push
             </button>
           )}
+          
+          {/* Кнопка для остановки сирены */}
+          {isSirenPlaying && (
+            <button 
+              style={{ ...styles.button, ...styles.dangerButton }}
+              onClick={stopSirenSound}
+            >
+              <span role="img" aria-label="Остановить сирену">🔇</span> Стоп
+            </button>
+          )}
+          
+          {/* Кнопка выхода */}
           <button 
-            onClick={handleLogout} 
-            style={{ 
-              padding: '0.75rem 1.5rem', 
-              backgroundColor: '#dc3545', 
-              color: 'white', 
-              border: 'none',
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              boxShadow: '0 2px 4px rgba(220, 53, 69, 0.2)',
-              transition: 'all 0.2s ease'
-            }}
+            style={{ ...styles.button, ...styles.secondaryButton }}
+            onClick={handleLogout}
           >
             Выйти
           </button>
         </div>
       </div>
 
-      {/* Уведомление */}
-      {notification.show && (
-        <div style={{ 
-          padding: '1rem 1.25rem',
-          marginBottom: '1.5rem',
-          borderRadius: '0.5rem',
-          backgroundColor: notification.type === 'success' ? '#d4edda' : '#f8d7da',
-          color: notification.type === 'success' ? '#155724' : '#721c24',
-          border: `1px solid ${notification.type === 'success' ? '#c3e6cb' : '#f5c6cb'}`,
-          boxShadow: '0 2px 6px rgba(0, 0, 0, 0.05)',
-          display: 'flex',
-          alignItems: 'center'
-        }}>
-          {notification.type === 'success' ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.75rem' }}>
-              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.75rem' }}>
-              <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-              <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
-            </svg>
-          )}
-          {notification.message}
-        </div>
-      )}
-
-      {error && (
-        <div style={{ 
-          padding: '1rem 1.25rem',
-          marginBottom: '1.5rem',
-          borderRadius: '0.5rem',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
-          border: '1px solid #f5c6cb',
-          boxShadow: '0 2px 6px rgba(0, 0, 0, 0.05)',
-          display: 'flex',
-          alignItems: 'center'
-        }}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.75rem' }}>
-            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-            <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
-          </svg>
-          {error}
-        </div>
-      )}
-
-      <div style={{ 
-        marginBottom: '1.5rem',
-        display: 'flex',
-        backgroundColor: 'white',
-        borderRadius: '0.75rem',
-        overflow: 'hidden',
-        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-      }}>
+      <div style={styles.tabs}>
         <button 
-          onClick={() => setActiveTab('active')} 
           style={{ 
-            padding: '1rem 1.5rem', 
-            backgroundColor: activeTab === 'active' ? '#007bff' : 'white',
-            color: activeTab === 'active' ? 'white' : '#495057',
-            border: 'none',
-            cursor: 'pointer',
-            flex: 1,
-            fontWeight: activeTab === 'active' ? 'bold' : 'normal',
-            transition: 'all 0.2s ease'
+            ...styles.tab, 
+            ...(activeTab === 'active' ? styles.activeTab : {}) 
           }}
+          onClick={() => setActiveTab('active')}
         >
-          Активные вызовы
+          Активные вызовы {activeCalls.length > 0 && `(${activeCalls.length})`}
         </button>
         <button 
-          onClick={() => setActiveTab('history')} 
           style={{ 
-            padding: '1rem 1.5rem', 
-            backgroundColor: activeTab === 'history' ? '#007bff' : 'white',
-            color: activeTab === 'history' ? 'white' : '#495057',
-            border: 'none',
-            cursor: 'pointer',
-            flex: 1,
-            fontWeight: activeTab === 'history' ? 'bold' : 'normal',
-            transition: 'all 0.2s ease'
+            ...styles.tab, 
+            ...(activeTab === 'history' ? styles.activeTab : {}) 
           }}
+          onClick={() => setActiveTab('history')}
         >
           История вызовов
         </button>
       </div>
 
-      {loading ? (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '3rem',
-          backgroundColor: 'white',
-          borderRadius: '0.75rem',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-        }}>
-          <div className="spinner" style={{
-            width: '50px',
-            height: '50px',
-            border: '5px solid rgba(0, 123, 255, 0.2)',
-            borderRadius: '50%',
-            borderTop: '5px solid #007bff',
-            animation: 'spin 1s linear infinite'
-          }}></div>
-          <style>{`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}</style>
-        </div>
-      ) : activeTab === 'active' ? (
-        <div style={{
-          backgroundColor: 'white',
-          borderRadius: '0.75rem',
-          padding: '1.5rem',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-        }}>
-          <h2 style={{ 
-            marginTop: 0, 
-            color: '#343a40',
-            fontSize: '1.5rem',
-            marginBottom: '1.5rem'
-          }}>Активные SOS вызовы</h2>
-          {activeCalls.length === 0 ? (
-            <div style={{
-              padding: '3rem',
-              textAlign: 'center',
-              color: '#6c757d',
-              backgroundColor: '#f8f9fa',
-              borderRadius: '0.5rem',
-              border: '1px dashed #dee2e6'
-            }}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" viewBox="0 0 16 16" style={{ marginBottom: '1rem', opacity: 0.5 }}>
-                <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
-              </svg>
-              <p style={{ fontSize: '1.1rem', fontWeight: '500' }}>Нет активных вызовов</p>
+      {/* Содержимое вкладки */}
+      {activeTab === 'active' ? (
+        <>
+          {loading ? (
+            <div style={styles.loadingContainer}>
+              <p>Загрузка...</p>
             </div>
-          ) : (
-            <div style={{ display: 'grid', gap: '1.5rem' }}>
-              {activeCalls.map(call => (
-                <div 
-                  key={call.id || call._id} 
-                  style={{ 
-                    border: '1px solid #e9ecef', 
-                    borderRadius: '0.75rem',
-                    padding: '1.5rem',
-                    backgroundColor: '#f8f9fa',
-                    boxShadow: '0 2px 6px rgba(0, 0, 0, 0.05)',
-                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                    ':hover': {
-                      transform: 'translateY(-2px)',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
-                    }
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '2rem',
-                      fontWeight: 'bold'
-                    }}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                        <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
-                        <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
-                      </svg>
-                      {call.userName || 'Неизвестный'} ({call.phone})
-                    </div>
-                    <div style={{
-                      backgroundColor: '#e9ecef',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '2rem',
-                      fontSize: '0.9rem',
-                      color: '#495057',
-                      fontWeight: '500'
-                    }}>
-                      {call.createdAt && formatDate(call.createdAt)}
-                    </div>
+          ) : error ? (
+            <div style={styles.errorMessage}>
+              <p>{error}</p>
+              <button 
+                style={{ ...styles.button, ...styles.primaryButton }}
+                onClick={() => window.location.reload()}
+              >
+                Обновить
+              </button>
+            </div>
+          ) : activeCalls.length > 0 ? (
+            <div style={styles.callList}>
+              {activeCalls.map((call) => (
+                <div key={call.id || call._id} style={styles.callCard}>
+                  <div style={styles.callInfo}>
+                    <h3>{call.userName || 'Пользователь'}</h3>
+                    <p>Телефон: {call.phone}</p>
+                    <p>Время: {formatDate(call.createdAt)}</p>
                   </div>
-                  
-                  <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-                    <Link 
-                      to={`/call/${call.id || call._id}`} 
-                      style={{ 
-                        padding: '0.75rem 1.5rem', 
-                        backgroundColor: '#28a745', 
-                        color: 'white', 
-                        borderRadius: '0.5rem',
-                        textDecoration: 'none',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        fontWeight: 'bold',
-                        boxShadow: '0 2px 4px rgba(40, 167, 69, 0.2)',
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                        <path d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5z"/>
-                      </svg>
-                      Просмотреть
+                  <div style={styles.callActions}>
+                    <Link to={`/call/${call.id || call._id}`}>
+                      <button style={{ ...styles.button, ...styles.primaryButton }}>
+                        <span role="img" aria-label="Ответить">📞</span> Ответить
+                      </button>
                     </Link>
                     <button 
-                      onClick={() => handleCancelCall(call.id || call._id)} 
-                      style={{ 
-                        padding: '0.75rem 1.5rem', 
-                        backgroundColor: '#dc3545', 
-                        color: 'white', 
-                        border: 'none',
-                        borderRadius: '0.5rem',
-                        cursor: 'pointer',
-                        fontWeight: 'bold',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        boxShadow: '0 2px 4px rgba(220, 53, 69, 0.2)',
-                        transition: 'all 0.2s ease'
-                      }}
+                      style={{ ...styles.button, ...styles.dangerButton }}
+                      onClick={() => handleCancelCall(call.id || call._id)}
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                        <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
-                      </svg>
-                      Отменить
+                      <span role="img" aria-label="Отклонить">❌</span> Отклонить
                     </button>
                   </div>
                 </div>
               ))}
             </div>
+          ) : (
+            <div style={styles.emptyState}>
+              <p>Нет активных вызовов</p>
+            </div>
           )}
-        </div>
+        </>
       ) : (
-        <div style={{
-          backgroundColor: 'white',
-          borderRadius: '0.75rem',
-          padding: '1.5rem',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-        }}>
-          <h2 style={{ 
-            marginTop: 0, 
-            color: '#343a40',
-            fontSize: '1.5rem',
-            marginBottom: '1.5rem'
-          }}>История вызовов</h2>
-          {callHistory.length === 0 ? (
-            <div style={{
-              padding: '3rem',
-              textAlign: 'center',
-              color: '#6c757d',
-              backgroundColor: '#f8f9fa',
-              borderRadius: '0.5rem',
-              border: '1px dashed #dee2e6'
-            }}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" viewBox="0 0 16 16" style={{ marginBottom: '1rem', opacity: 0.5 }}>
-                <path d="M14.5 3a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h13zm-13-1A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2h-13z"/>
-                <path d="M3 5.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 8a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 8zm0 2.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5z"/>
-              </svg>
-              <p style={{ fontSize: '1.1rem', fontWeight: '500' }}>История вызовов пуста</p>
+        <>
+          {loading ? (
+            <div style={styles.loadingContainer}>
+              <p>Загрузка истории...</p>
+            </div>
+          ) : error ? (
+            <div style={styles.errorMessage}>
+              <p>{error}</p>
               <button 
+                style={{ ...styles.button, ...styles.primaryButton }}
                 onClick={refreshHistory}
-                style={{ 
-                  padding: '0.75rem 1.5rem', 
-                  backgroundColor: '#007bff', 
-                  color: 'white', 
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  boxShadow: '0 2px 4px rgba(0, 123, 255, 0.2)',
-                  transition: 'all 0.2s ease',
-                  marginTop: '1rem'
-                }}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                  <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-                  <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-                </svg>
-                Обновить историю
+                Обновить
               </button>
             </div>
-          ) : (
-            <div>
-              <div style={{ 
-                display: 'flex', 
-                justifyContent: 'flex-end', 
-                marginBottom: '1rem' 
-              }}>
-                <button 
-                  onClick={refreshHistory}
-                  style={{ 
-                    padding: '0.5rem 1rem', 
-                    backgroundColor: '#007bff', 
-                    color: 'white', 
-                    border: 'none',
-                    borderRadius: '0.5rem',
-                    cursor: 'pointer',
-                    fontWeight: 'bold',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    boxShadow: '0 2px 4px rgba(0, 123, 255, 0.2)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                    <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-                  </svg>
-                  Обновить
-                </button>
-              </div>
-              <div style={{ display: 'grid', gap: '1.5rem' }}>
-                {callHistory.map(call => (
-                  <div 
-                    key={call._id} 
-                    style={{ 
-                      border: '1px solid #e9ecef', 
-                      borderRadius: '0.75rem',
-                      padding: '1.5rem',
-                      backgroundColor: '#f8f9fa',
-                      boxShadow: '0 2px 6px rgba(0, 0, 0, 0.05)',
-                      opacity: call.status === 'active' ? 1 : 0.7
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                      <div style={{ 
-                        display: 'flex', 
-                        alignItems: 'center',
-                        backgroundColor: '#6c757d',
-                        color: 'white',
-                        padding: '0.5rem 1rem',
-                        borderRadius: '2rem',
-                        fontWeight: 'bold'
-                      }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                          <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
-                          <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
-                        </svg>
-                        {call.phone}
-                      </div>
-                      <div style={{
-                        backgroundColor: call.status === 'active' ? '#28a745' : '#dc3545',
-                        color: 'white',
-                        padding: '0.5rem 1rem',
-                        borderRadius: '2rem',
-                        fontSize: '0.9rem',
-                        fontWeight: '500'
-                      }}>
-                        {call.status === 'active' ? 'Активный' : 'Отменен'}
-                      </div>
-                    </div>
-                    <div style={{
-                      backgroundColor: '#e9ecef',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '0.5rem',
-                      fontSize: '0.9rem',
-                      color: '#495057',
-                      display: 'inline-block',
-                      marginBottom: '1rem'
-                    }}>
-                      <strong>Время:</strong> {formatDate(call.createdAt)}
-                    </div>
-                    
-                    {call.status === 'active' && (
-                      <div style={{ marginTop: '1rem' }}>
-                        <Link 
-                          to={`/call/${call._id}`} 
-                          style={{ 
-                            padding: '0.75rem 1.5rem', 
-                            backgroundColor: '#28a745', 
-                            color: 'white', 
-                            borderRadius: '0.5rem',
-                            textDecoration: 'none',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            fontWeight: 'bold',
-                            boxShadow: '0 2px 4px rgba(40, 167, 69, 0.2)',
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                            <path d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5z"/>
-                          </svg>
-                          Просмотреть
-                        </Link>
-                      </div>
-                    )}
+          ) : callHistory.length > 0 ? (
+            <div style={styles.callList}>
+              {callHistory.map((call) => (
+                <div key={call.id || call._id} style={styles.callCard}>
+                  <div style={styles.callInfo}>
+                    <h3>{call.userName || 'Пользователь'}</h3>
+                    <p>Телефон: {call.phone}</p>
+                    <p>Время: {formatDate(call.createdAt)}</p>
+                    <p>Статус: {call.status === 'completed' ? 'Завершен' : 'Отменен'}</p>
                   </div>
-                ))}
-              </div>
-              
-              <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'center', gap: '0.75rem' }}>
-                <button 
-                  onClick={() => setPage(p => Math.max(1, p - 1))} 
-                  disabled={page === 1}
-                  style={{ 
-                    padding: '0.75rem 1.5rem', 
-                    backgroundColor: page === 1 ? '#e9ecef' : '#007bff',
-                    color: page === 1 ? '#6c757d' : 'white',
-                    border: 'none',
-                    borderRadius: '0.5rem',
-                    cursor: page === 1 ? 'not-allowed' : 'pointer',
-                    fontWeight: 'bold',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    boxShadow: page === 1 ? 'none' : '0 2px 4px rgba(0, 123, 255, 0.2)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                    <path fillRule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
-                  </svg>
-                  Назад
-                </button>
-                <span style={{ 
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: 'white',
-                  borderRadius: '0.5rem',
-                  fontWeight: 'bold',
-                  color: '#495057',
-                  border: '1px solid #dee2e6'
-                }}>Страница {page}</span>
-                <button 
-                  onClick={() => setPage(p => p + 1)} 
-                  disabled={callHistory.length < 10}
-                  style={{ 
-                    padding: '0.75rem 1.5rem', 
-                    backgroundColor: callHistory.length < 10 ? '#e9ecef' : '#007bff',
-                    color: callHistory.length < 10 ? '#6c757d' : 'white',
-                    border: 'none',
-                    borderRadius: '0.5rem',
-                    cursor: callHistory.length < 10 ? 'not-allowed' : 'pointer',
-                    fontWeight: 'bold',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    boxShadow: callHistory.length < 10 ? 'none' : '0 2px 4px rgba(0, 123, 255, 0.2)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  Вперед
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginLeft: '0.5rem' }}>
-                    <path fillRule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
-                  </svg>
-                </button>
-              </div>
+                  <div style={styles.callActions}>
+                    <Link to={`/call-details/${call.id || call._id}`}>
+                      <button style={{ ...styles.button, ...styles.secondaryButton }}>
+                        <span role="img" aria-label="Детали">📋</span> Детали
+                      </button>
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={styles.emptyState}>
+              <p>История вызовов пуста</p>
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
