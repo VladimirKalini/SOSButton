@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+/**
+ * Схема для хранения push-подписок пользователей
+ */
 const pushSubscriptionSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -7,14 +10,29 @@ const pushSubscriptionSchema = new mongoose.Schema({
     required: true
   },
   subscription: {
-    endpoint: String,
-    expirationTime: Number,
+    endpoint: {
+      type: String,
+      required: true
+    },
+    expirationTime: {
+      type: Number,
+      default: null
+    },
     keys: {
-      p256dh: String,
-      auth: String
+      p256dh: {
+        type: String,
+        required: true
+      },
+      auth: {
+        type: String,
+        required: true
+      }
     }
   },
-  userAgent: String,
+  userAgent: {
+    type: String,
+    default: 'Unknown'
+  },
   deviceId: String,
   createdAt: {
     type: Date,
@@ -26,10 +44,7 @@ const pushSubscriptionSchema = new mongoose.Schema({
   }
 });
 
-// Индекс для быстрого поиска по userId
-pushSubscriptionSchema.index({ userId: 1 });
-
-// Индекс для быстрого поиска по endpoint
-pushSubscriptionSchema.index({ 'subscription.endpoint': 1 });
+// Создаем индекс для быстрого поиска по userId и endpoint
+pushSubscriptionSchema.index({ userId: 1, 'subscription.endpoint': 1 }, { unique: true });
 
 module.exports = mongoose.model('PushSubscription', pushSubscriptionSchema); 
