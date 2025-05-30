@@ -26,6 +26,15 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: Object.values(ROLES),
     default: ROLES.USER
+  },
+  deviceId: {
+    type: String,
+    default: null,
+    index: true
+  },
+  lastLogin: {
+    type: Date,
+    default: Date.now
   }
 }, {
   timestamps: true

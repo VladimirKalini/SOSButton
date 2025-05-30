@@ -21,13 +21,15 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "uuid": "^11.1.0",
+    "web-push": "^3.6.6",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
     "start:server": "node server.js",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "generate-vapid": "npx web-push generate-vapid-keys"
   },
   "eslintConfig": {
     "extends": [
