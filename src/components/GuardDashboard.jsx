@@ -4,7 +4,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../authContext';
 import { io } from 'socket.io-client';
-import { requestNotificationPermission, showIncomingCallOverlay } from '../services/notificationService';
+import { 
+  requestNotificationPermission, 
+  showIncomingCallOverlay, 
+  playSiren, 
+  stopSiren, 
+  initAudioContext 
+} from '../services/notificationService';
 
 const GuardDashboard = () => {
   const [activeCalls, setActiveCalls] = useState([]);
@@ -20,48 +26,74 @@ const GuardDashboard = () => {
   const [isSirenPlaying, setIsSirenPlaying] = useState(false);
   const navigate = useNavigate();
   const overlayCloseRef = useRef(null);
+  const socketRef = useRef(null);
+  const activeCallsRef = useRef([]);
+
+  // Обновляем ref при изменении activeCalls
+  useEffect(() => {
+    activeCallsRef.current = activeCalls;
+  }, [activeCalls]);
 
   useEffect(() => {
     // Запрашиваем разрешение на уведомления при загрузке компонента
     requestNotificationPermission();
     
-    // Создаем аудио элемент для сирены
-    audioRef.current = new Audio('/siren.mp3');
-    audioRef.current.loop = true;
+    // Инициализируем аудио-контекст для лучшей работы на мобильных устройствах
+    initAudioContext().catch(err => console.error('Ошибка инициализации аудио:', err));
+    
+    // Добавляем обработчик сообщений от сервис-воркера
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
     
     return () => {
       // Останавливаем звук при размонтировании компонента
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
+      stopSiren();
       
       // Закрываем оверлей, если он открыт
       if (overlayCloseRef.current) {
         overlayCloseRef.current();
       }
+      
+      // Удаляем обработчик сообщений от сервис-воркера
+      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
     };
   }, []);
 
+  // Обработчик сообщений от сервис-воркера
+  const handleServiceWorkerMessage = (event) => {
+    const { action, data } = event.data;
+    
+    if (action === 'accept-sos') {
+      // Находим вызов по ID или другим данным
+      const callId = data.id || data.callId;
+      if (callId) {
+        navigate(`/call/${callId}`);
+      }
+    } else if (action === 'decline-sos') {
+      // Находим вызов по ID или другим данным
+      const callId = data.id || data.callId;
+      if (callId) {
+        handleCancelCall(callId);
+      }
+    }
+  };
+
   useEffect(() => {
-    const socket = io(serverUrl, { 
+    socketRef.current = io(serverUrl, { 
       auth: { token },
       transports: ['websocket']
     });
 
-    socket.on('connect', () => {
-      socket.emit('join-room', 'guard');
+    socketRef.current.on('connect', () => {
+      socketRef.current.emit('join-room', 'guard');
     });
 
-    socket.on('incoming-sos', (data) => {
+    socketRef.current.on('incoming-sos', (data) => {
       setActiveCalls(prev => [data, ...prev]);
       
       // Проигрываем сирену при получении нового вызова
-      if (audioRef.current) {
-        audioRef.current.play()
-          .then(() => setIsSirenPlaying(true))
-          .catch(err => console.error('Ошибка воспроизведения сирены:', err));
-      }
+      playSiren()
+        .then(() => setIsSirenPlaying(true))
+        .catch(err => console.error('Ошибка воспроизведения сирены:', err));
       
       // Показываем оверлей с уведомлением
       if (overlayCloseRef.current) {
@@ -75,13 +107,12 @@ const GuardDashboard = () => {
       );
     });
 
-    socket.on('sos-canceled', ({ id }) => {
-      setActiveCalls(prev => prev.filter(call => call.id !== id));
+    socketRef.current.on('sos-canceled', ({ id }) => {
+      setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
       
       // Если это был последний активный вызов, останавливаем сирену
-      if (activeCalls.length <= 1 && audioRef.current && isSirenPlaying) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
+      if (activeCallsRef.current.length <= 1) {
+        stopSiren();
         setIsSirenPlaying(false);
       }
       
@@ -92,16 +123,17 @@ const GuardDashboard = () => {
       }
     });
 
-    return () => socket.disconnect();
-  }, [token, serverUrl, navigate, activeCalls.length, isSirenPlaying]);
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, [token, serverUrl, navigate]);
 
   // Функция для остановки сирены
-  const stopSiren = () => {
-    if (audioRef.current && isSirenPlaying) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      setIsSirenPlaying(false);
-    }
+  const stopSirenSound = () => {
+    stopSiren();
+    setIsSirenPlaying(false);
     
     // Закрываем оверлей, если он открыт
     if (overlayCloseRef.current) {
@@ -183,9 +215,8 @@ const GuardDashboard = () => {
       setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
       
       // Останавливаем сирену, если это был единственный активный вызов
-      if (activeCalls.length <= 1 && audioRef.current && isSirenPlaying) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
+      if (activeCallsRef.current.length <= 1) {
+        stopSiren();
         setIsSirenPlaying(false);
       }
       
@@ -202,17 +233,11 @@ const GuardDashboard = () => {
       }, 3000);
     } catch (err) {
       console.error('Ошибка при отмене вызова:', err);
-      
-      setError('Не удалось отменить вызов');
-      
-      // Показываем уведомление об ошибке
       setNotification({
         show: true,
-        message: 'Не удалось отменить вызов: ' + (err.response?.data?.message || err.message),
+        message: 'Не удалось отменить вызов',
         type: 'error'
       });
-      
-      // Скрываем уведомление через 3 секунды
       setTimeout(() => {
         setNotification({ show: false, message: '', type: '' });
       }, 3000);
@@ -292,7 +317,7 @@ const GuardDashboard = () => {
         <div style={{ display: 'flex', gap: '1rem' }}>
           {isSirenPlaying && (
             <button 
-              onClick={stopSiren} 
+              onClick={stopSirenSound} 
               style={{ 
                 padding: '0.75rem 1.5rem', 
                 backgroundColor: '#ffc107', 

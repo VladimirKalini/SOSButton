@@ -8,6 +8,37 @@ import { SOSButton } from './components/SOSButton';
 import GuardDashboard from './components/GuardDashboard';
 import CallDetails from './components/CallDetails';
 import PermissionsRequest from './components/PermissionsRequest';
+import './App.css';
+
+// Добавляем стили для адаптивной верстки
+const responsiveStyles = {
+  container: {
+    padding: '1rem',
+    maxWidth: '1200px',
+    margin: '0 auto',
+    boxSizing: 'border-box',
+    width: '100%'
+  },
+  userApp: {
+    padding: '1rem',
+    textAlign: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '100vh'
+  },
+  guardApp: {
+    padding: '1rem',
+    boxSizing: 'border-box',
+    width: '100%'
+  },
+  heading: {
+    fontSize: 'clamp(1.5rem, 5vw, 2.5rem)',
+    marginBottom: '1.5rem',
+    textAlign: 'center'
+  }
+};
 
 function UserApp() {
   const { token, user } = useAuth();
@@ -15,8 +46,8 @@ function UserApp() {
   const [permissionsGranted, setPermissionsGranted] = useState(false);
 
   return (
-    <div style={{ padding: '2rem', textAlign: 'center' }}>
-      <h1>SOS Alert</h1>
+    <div style={responsiveStyles.userApp}>
+      <h1 style={responsiveStyles.heading}>SOS Alert</h1>
       {!permissionsGranted && (
         <PermissionsRequest onPermissionsGranted={() => setPermissionsGranted(true)} />
       )}
@@ -29,12 +60,14 @@ function UserApp() {
 
 function GuardApp() {
   return (
-    <div style={{ padding: '1rem' }}>
-      <h1>Панель охраны</h1>
-      <Routes>
-        <Route path="/" element={<GuardDashboard />} />
-        <Route path="/call/:id" element={<CallDetails />} />
-      </Routes>
+    <div style={responsiveStyles.guardApp}>
+      <h1 style={responsiveStyles.heading}>Панель охраны</h1>
+      <div style={responsiveStyles.container}>
+        <Routes>
+          <Route path="/" element={<GuardDashboard />} />
+          <Route path="/call/:id" element={<CallDetails />} />
+        </Routes>
+      </div>
     </div>
   );
 }

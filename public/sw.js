@@ -10,6 +10,7 @@ const ASSETS = [
   '/favicon.ico',
   '/logo192.png',
   '/logo512.png',
+  '/siren.mp3',
   // Основные статические файлы React (замените на реальные имена из build)
   '/static/js/bundle.js',
   '/static/js/main.js',
@@ -64,4 +65,123 @@ self.addEventListener('fetch', event => {
       })
     )
   );
+});
+
+// Аудио-плеер для воспроизведения сирены
+let audioPlayer = null;
+
+// Обработка push-уведомлений
+self.addEventListener('push', event => {
+  const data = event.data.json();
+  const options = {
+    body: data.body || 'SOS вызов!',
+    icon: '/logo192.png',
+    vibrate: [200, 100, 200, 100, 200],
+    badge: '/logo192.png',
+    tag: 'sos-notification',
+    requireInteraction: true,
+    renotify: true,
+    actions: [
+      { action: 'accept', title: 'Принять' },
+      { action: 'decline', title: 'Отклонить' }
+    ],
+    data: {
+      url: data.url || '/',
+      fullScreenIntent: true,
+      soundName: 'siren.mp3'
+    }
+  };
+
+  // Для Android добавляем полноэкранное намерение
+  if (data.data && data.data.fullScreenIntent) {
+    options.data.fullScreenIntent = true;
+  }
+
+  // Показываем уведомление
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'SOS Сигнал', options)
+      .then(() => {
+        // Воспроизводим звук сирены
+        if (!audioPlayer) {
+          audioPlayer = new Audio('/siren.mp3');
+          audioPlayer.loop = true;
+        }
+        return audioPlayer.play();
+      })
+      .catch(err => console.error('Ошибка показа уведомления:', err))
+  );
+});
+
+// Обработка клика по уведомлению
+self.addEventListener('notificationclick', event => {
+  const notification = event.notification;
+  const action = event.action;
+  const data = notification.data || {};
+  
+  // Закрываем уведомление
+  notification.close();
+  
+  // Останавливаем звук сирены
+  if (audioPlayer) {
+    audioPlayer.pause();
+    audioPlayer.currentTime = 0;
+    audioPlayer = null;
+  }
+  
+  // Обрабатываем действия
+  if (action === 'accept') {
+    // Открываем окно с вызовом
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window' }).then(clientList => {
+        // Если есть открытое окно, фокусируемся на нем
+        for (const client of clientList) {
+          if (client.url.includes(self.registration.scope) && 'focus' in client) {
+            client.postMessage({ action: 'accept-sos', data: data });
+            return client.focus();
+          }
+        }
+        
+        // Если нет открытого окна, открываем новое
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(data.url || '/');
+        }
+      })
+    );
+  } else if (action === 'decline') {
+    // Отправляем сообщение об отклонении вызова
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window' }).then(clientList => {
+        for (const client of clientList) {
+          if (client.url.includes(self.registration.scope)) {
+            client.postMessage({ action: 'decline-sos', data: data });
+          }
+        }
+      })
+    );
+  } else {
+    // Просто открываем приложение при клике по уведомлению
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window' }).then(clientList => {
+        for (const client of clientList) {
+          if (client.url.includes(self.registration.scope) && 'focus' in client) {
+            return client.focus();
+          }
+        }
+        
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(data.url || '/');
+        }
+      })
+    );
+  }
+});
+
+// Обработка закрытия уведомления
+self.addEventListener('notificationclose', event => {
+  // Останавливаем звук сирены
+  if (audioPlayer) {
+    audioPlayer.pause();
+    audioPlayer.currentTime = 0;
+    audioPlayer = null;
+  }
 });
