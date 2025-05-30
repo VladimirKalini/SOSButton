@@ -24,7 +24,7 @@ const urlBase64ToUint8Array = (base64String) => {
 };
 
 // Публичный VAPID ключ (заменить на реальный после генерации)
-const publicVapidKey = 'BLGrBJeuBk3XEjU9lX_fKNTv_TU_XxZnRgPRnM8RQmBjr-5NPRg-JlGKsQpVJIgXVBcZYVMHhCuCnr1XZT5Macs';
+const publicVapidKey = 'BDXFtyQvu34gIH9tJUlN14goQg5DclkVHFBuM1cz7c8AeqvGWKzKx8RkYxqNqbD0KQEaqpG_tm0lgnrhALU';
 
 /**
  * Регистрирует сервис-воркер и подписывается на push-уведомления

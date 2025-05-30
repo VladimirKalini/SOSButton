@@ -4,8 +4,8 @@ const User = require('../models/User');
 
 // VAPID ключи для отправки push-уведомлений
 // В реальном проекте эти ключи должны храниться в переменных окружения
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BLGrBJeuBk3XEjU9lX_fKNTv_TU_XxZnRgPRnM8RQmBjr-5NPRg-JlGKsQpVJIgXVBcZYVMHhCuCnr1XZT5Macs';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'YOUR_PRIVATE_KEY_HERE';
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BDXFtyQvu34gIH9tJUlN14goQg5DclkVHFBuM1cz7c8AeqvGWKzKx8RkYxqNqbD0KQEaqpG_tm0lgnrhALU';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'JUNZKpI9QeLnA0X5qnXpwZXjOcg7MQyKXsUT3aWQ';
 const VAPID_EMAIL = process.env.VAPID_EMAIL || 'mailto:admin@example.com';
 
 // Настраиваем VAPID ключи
