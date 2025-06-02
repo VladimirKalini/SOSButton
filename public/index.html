@@ -12,11 +12,21 @@
     <!-- iOS разрешения -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <!-- Разрешения для камеры и микрофона -->
+    <!-- Разрешения для камеры, микрофона и геолокации -->
     <meta http-equiv="permissions-policy" content="camera=(), microphone=(), geolocation=()" />
+    <!-- Разрешения для полноэкранных уведомлений -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="SOS Button" />
+    <meta name="apple-mobile-web-app-title" content="SOS Button" />
+    <meta name="msapplication-starturl" content="/" />
+    <meta name="msapplication-navbutton-color" content="#ff3b30" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <link rel="preload" href="%PUBLIC_URL%/offline.html" as="document" />
+    <link rel="preload" href="%PUBLIC_URL%/siren.mp3" as="audio" />
 
     <!--
       manifest.json provides metadata used when your web app is installed on a
@@ -47,5 +57,8 @@
       To begin the development, run `npm start` or `yarn start`.
       To create a production bundle, use `npm run build` or `yarn build`.
     -->
+    
+    <!-- Предзагрузка аудио для быстрого воспроизведения -->
+    <audio id="preload-siren" src="%PUBLIC_URL%/siren.mp3" preload="auto" style="display:none;"></audio>
   </body>
 </html>

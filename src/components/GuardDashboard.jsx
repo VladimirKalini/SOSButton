@@ -11,6 +11,7 @@ import {
   stopSiren, 
   initAudioContext 
 } from '../services/notificationService';
+import SOSConfirmationOverlay from './SOSConfirmationOverlay';
 
 const GuardDashboard = () => {
   const [activeCalls, setActiveCalls] = useState([]);
@@ -28,6 +29,10 @@ const GuardDashboard = () => {
   const overlayCloseRef = useRef(null);
   const socketRef = useRef(null);
   const activeCallsRef = useRef([]);
+  
+  // Состояние для управления полноэкранным оверлеем SOS
+  const [showSOSOverlay, setShowSOSOverlay] = useState(false);
+  const [currentSOSData, setCurrentSOSData] = useState(null);
 
   // Обновляем ref при изменении activeCalls
   useEffect(() => {
@@ -60,7 +65,8 @@ const GuardDashboard = () => {
 
   // Обработчик сообщений от сервис-воркера
   const handleServiceWorkerMessage = (event) => {
-    const { action, data } = event.data;
+    const { action, data } = event.data || {};
+    console.log('Получено сообщение от SW:', action, data);
     
     if (action === 'accept-sos') {
       // Находим вызов по ID или другим данным
@@ -74,6 +80,11 @@ const GuardDashboard = () => {
       if (callId) {
         handleCancelCall(callId);
       }
+    } else if (action === 'show-sos-overlay') {
+      // Показываем полноэкранный оверлей SOS
+      console.log('Показываем полноэкранный оверлей SOS с данными:', data);
+      setCurrentSOSData(data);
+      setShowSOSOverlay(true);
     }
   };
 
@@ -90,21 +101,14 @@ const GuardDashboard = () => {
     socketRef.current.on('incoming-sos', (data) => {
       setActiveCalls(prev => [data, ...prev]);
       
+      // Показываем полноэкранный оверлей SOS
+      setCurrentSOSData(data);
+      setShowSOSOverlay(true);
+      
       // Проигрываем сирену при получении нового вызова
       playSiren()
         .then(() => setIsSirenPlaying(true))
         .catch(err => console.error('Ошибка воспроизведения сирены:', err));
-      
-      // Показываем оверлей с уведомлением
-      if (overlayCloseRef.current) {
-        overlayCloseRef.current(); // Закрываем предыдущий оверлей, если он есть
-      }
-      
-      overlayCloseRef.current = showIncomingCallOverlay(
-        data,
-        () => navigate(`/call/${data.id || data._id}`), // При принятии вызова переходим на страницу вызова
-        () => handleCancelCall(data.id || data._id) // При отклонении отменяем вызов
-      );
     });
 
     socketRef.current.on('sos-canceled', ({ id }) => {
@@ -116,10 +120,10 @@ const GuardDashboard = () => {
         setIsSirenPlaying(false);
       }
       
-      // Закрываем оверлей, если он открыт
-      if (overlayCloseRef.current) {
-        overlayCloseRef.current();
-        overlayCloseRef.current = null;
+      // Закрываем оверлей, если он открыт и относится к отмененному вызову
+      if (showSOSOverlay && currentSOSData && 
+          (currentSOSData.id === id || currentSOSData._id === id)) {
+        setShowSOSOverlay(false);
       }
     });
 
@@ -220,6 +224,12 @@ const GuardDashboard = () => {
         setIsSirenPlaying(false);
       }
       
+      // Закрываем оверлей, если он относится к отмененному вызову
+      if (showSOSOverlay && currentSOSData && 
+          (currentSOSData.id === id || currentSOSData._id === id)) {
+        setShowSOSOverlay(false);
+      }
+      
       // Показываем уведомление об успешной отмене
       setNotification({
         show: true,
@@ -245,7 +255,22 @@ const GuardDashboard = () => {
   };
 
   const handleLogout = () => {
-    // Implement the logout logic here
+    logout();
+  };
+
+  // Обработчики для полноэкранного оверлея SOS
+  const handleAcceptSOS = (callData) => {
+    const callId = callData.id || callData._id;
+    if (callId) {
+      navigate(`/call/${callId}`);
+    }
+  };
+  
+  const handleDeclineSOS = (callData) => {
+    const callId = callData.id || callData._id;
+    if (callId) {
+      handleCancelCall(callId);
+    }
   };
 
   // Функция для принудительного обновления истории вызовов
@@ -299,6 +324,15 @@ const GuardDashboard = () => {
       backgroundColor: '#f8f9fa',
       minHeight: '100vh'
     }}>
+      {/* Полноэкранный оверлей SOS */}
+      <SOSConfirmationOverlay 
+        show={showSOSOverlay}
+        callData={currentSOSData || {}}
+        onAccept={handleAcceptSOS}
+        onDecline={handleDeclineSOS}
+        onClose={() => setShowSOSOverlay(false)}
+      />
+
       <div style={{ 
         display: 'flex', 
         justifyContent: 'space-between', 

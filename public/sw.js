@@ -74,9 +74,9 @@ let audioPlayer = null;
 self.addEventListener('push', event => {
   const data = event.data.json();
   const options = {
-    body: data.body || 'SOS вызов!',
+    body: data.body || 'SOS вызов! Требуется подтверждение.',
     icon: '/logo192.png',
-    vibrate: [200, 100, 200, 100, 200],
+    vibrate: [200, 100, 200, 100, 200, 100, 400],
     badge: '/logo192.png',
     tag: 'sos-notification',
     requireInteraction: true,
@@ -88,7 +88,8 @@ self.addEventListener('push', event => {
     data: {
       url: data.url || '/',
       fullScreenIntent: true,
-      soundName: 'siren.mp3'
+      soundName: 'siren.mp3',
+      callData: data.callData || {}
     }
   };
 
@@ -109,6 +110,26 @@ self.addEventListener('push', event => {
         return audioPlayer.play();
       })
       .catch(err => console.error('Ошибка показа уведомления:', err))
+      .then(() => {
+        // Если возможно, открываем окно приложения с полноэкранным оверлеем
+        return self.clients.matchAll({ type: 'window' }).then(clientList => {
+          // Если есть открытое окно, отправляем сообщение для показа оверлея
+          for (const client of clientList) {
+            if (client.url.includes(self.registration.scope)) {
+              client.postMessage({ 
+                action: 'show-sos-overlay', 
+                data: data.callData || {} 
+              });
+              return;
+            }
+          }
+          
+          // Если нет открытого окна, открываем новое
+          if (self.clients.openWindow) {
+            return self.clients.openWindow(data.url || '/');
+          }
+        });
+      })
   );
 });
 
@@ -159,11 +180,12 @@ self.addEventListener('notificationclick', event => {
       })
     );
   } else {
-    // Просто открываем приложение при клике по уведомлению
+    // Просто открываем приложение при клике по уведомлению и показываем оверлей
     event.waitUntil(
       self.clients.matchAll({ type: 'window' }).then(clientList => {
         for (const client of clientList) {
           if (client.url.includes(self.registration.scope) && 'focus' in client) {
+            client.postMessage({ action: 'show-sos-overlay', data: data });
             return client.focus();
           }
         }
@@ -183,5 +205,19 @@ self.addEventListener('notificationclose', event => {
     audioPlayer.pause();
     audioPlayer.currentTime = 0;
     audioPlayer = null;
+  }
+});
+
+// Обработка сообщений от клиентов
+self.addEventListener('message', event => {
+  const { action, data } = event.data || {};
+  
+  if (action === 'stop-siren') {
+    // Останавливаем звук сирены
+    if (audioPlayer) {
+      audioPlayer.pause();
+      audioPlayer.currentTime = 0;
+      audioPlayer = null;
+    }
   }
 });

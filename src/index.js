@@ -4,6 +4,10 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { getPlatform } from './services/platformConfig';
+import axios from 'axios';
+
+// Устанавливаем базовый URL для axios
+axios.defaults.baseURL = 'https://1fxpro.vip';
 
 // 1) Рендерим React-приложение
 const root = ReactDOM.createRoot(document.getElementById('root'));
@@ -41,7 +45,14 @@ if ('serviceWorker' in navigator) {
               id: 'sos_channel',
               name: 'SOS Уведомления',
               description: 'Важные уведомления о SOS-вызовах',
-              importance: 'high'
+              importance: 'high',
+              // Добавляем настройки для полноэкранных уведомлений
+              enableVibration: true,
+              vibrationPattern: [200, 100, 200, 100, 200, 100, 400],
+              enableLights: true,
+              lightColor: '#ff0000',
+              lockscreenVisibility: 'public',
+              fullScreenIntent: true
             }
           });
         }

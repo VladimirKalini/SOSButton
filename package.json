@@ -29,7 +29,8 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "reset-db": "node src/scripts/resetDbAndCreateGuard.js",
-    "create-test-users": "node src/scripts/createTestUsers.js"
+    "create-test-users": "node src/scripts/createTestUsers.js",
+    "remove-webrtc": "node src/scripts/removeWebRTC.js"
   },
   "eslintConfig": {
     "extends": [

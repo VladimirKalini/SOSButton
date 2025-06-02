@@ -1,4 +1,3 @@
-
 {
   "name": "SOS Alert App",
   "short_name": "SOSApp",
@@ -17,5 +16,18 @@
       "sizes": "512x512",
       "type": "image/png"
     }
+  ],
+  "gcm_sender_id": "103953800507",
+  "related_applications": [],
+  "prefer_related_applications": false,
+  "permissions": [
+    "notifications",
+    "wake-lock",
+    "vibrate",
+    "geolocation"
+  ],
+  "categories": [
+    "security",
+    "emergency"
   ]
 }
