@@ -1,3 +1,35 @@
+# SOS Button App
+
+## Работа с базой данных
+
+### Очистка базы данных и создание аккаунта охраны
+
+Для очистки базы данных MongoDB и создания нового аккаунта охраны выполните:
+
+```bash
+npm run reset-db
+```
+
+Этот скрипт:
+1. Удалит все существующие записи из коллекций `users` и `sos`
+2. Создаст новый аккаунт охраны с данными:
+   - Телефон: +79000000000
+   - Пароль: guard123
+   - Имя: Охрана
+   - Роль: guard
+
+Вы можете изменить эти данные, отредактировав файл `src/scripts/resetDbAndCreateGuard.js`.
+
+### Создание тестовых пользователей
+
+Для добавления тестовых пользователей в базу данных выполните:
+
+```bash
+npm run create-test-users
+```
+
+Этот скрипт добавит трех тестовых пользователей с ролью `user`. Вы можете изменить или добавить пользователей, отредактировав файл `src/scripts/createTestUsers.js`.
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).

@@ -27,7 +27,9 @@
     "start:server": "node server.js",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "reset-db": "node src/scripts/resetDbAndCreateGuard.js",
+    "create-test-users": "node src/scripts/createTestUsers.js"
   },
   "eslintConfig": {
     "extends": [
