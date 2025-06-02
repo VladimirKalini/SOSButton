@@ -1,34 +1,25 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
-import { diagnoseWebRTCError } from '../scripts/webrtcErrorHandler';
 
 export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }) {
   const socketRef = useRef(null);
-  const peerRef = useRef(null);
-  const streamRef = useRef(null);
-  const videoRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [streaming, setStreaming] = useState(false);
   const [sosId, setSosId] = useState(null);
   const [location, setLocation] = useState(null);
   const [backgroundMode, setBackgroundMode] = useState(false);
   const wakeLockRef = useRef(null);
   const [debugMessage, setDebugMessage] = useState('');
-  const [iceCandidates, setIceCandidates] = useState([]);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const maxReconnectAttempts = 3;
-  const [signalingState, setSignalingState] = useState('stable');
 
-  // Функция для логирования с улучшенной диагностикой ошибок
+  // Функция для логирования
   const addDebugMessage = (message, error = null) => {
     console.log(message);
     
-    // Если передана ошибка, используем диагностику
     if (error) {
-      const diagnosis = diagnoseWebRTCError(error);
+      const diagnosis = "Ошибка в приложении";
       setDebugMessage(`${message}: ${diagnosis}`);
       console.log(`Диагностика ошибки: ${diagnosis}`);
     } else {
@@ -55,119 +46,10 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       setError('Не удалось подключиться к серверу');
     });
     
-    socketRef.current.on('sos-answer', async ({ answer }) => { 
-      try {
-        console.log('Получен ответ SOS:', answer);
-        addDebugMessage('Получен ответ от охраны');
-        
-        // Проверяем, что peerRef.current существует
-        if (!peerRef.current) {
-          console.error('Ошибка: peerRef.current отсутствует при получении ответа');
-          addDebugMessage('Ошибка: соединение не инициализировано');
-          
-          // Пробуем переподключиться
-          setTimeout(() => {
-            reinitializeConnection();
-          }, 1000);
-          return;
-        }
-        
-        // Проверяем, что answer имеет правильный формат
-        if (!answer || !answer.type || !answer.sdp) {
-          console.error('Получен некорректный answer:', answer);
-          addDebugMessage('Ошибка: некорректный формат ответа от сервера');
-          
-          // Пробуем переподключиться при ошибке
-          setTimeout(() => {
-            reinitializeConnection();
-          }, 1000);
-          return;
-        }
-        
-        try {
-          // Устанавливаем remoteDescription
-          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('Remote description установлен успешно');
-          addDebugMessage('Соединение установлено');
-          
-          // Отправляем сохраненные ICE кандидаты после установки remoteDescription
-          if (sosId && iceCandidates.length > 0) {
-            console.log(`Отправляем ${iceCandidates.length} сохраненных ICE кандидатов`);
-            iceCandidates.forEach(candidate => {
-              socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-              console.log('Отправлен сохраненный ICE кандидат');
-            });
-            setIceCandidates([]);
-          }
-        } catch (error) {
-          console.error('Ошибка при установке remoteDescription:', error);
-          addDebugMessage('Ошибка при установке соединения', error);
-          
-          // Пробуем переподключиться при ошибке
-          setTimeout(() => {
-            reinitializeConnection();
-          }, 1000);
-        }
-      } catch (e) {
-        console.error('Ошибка при установке ответа:', e);
-        addDebugMessage('Ошибка при обработке ответа', e);
-        
-        // Если произошла ошибка, пробуем переинициализировать соединение
-        setTimeout(() => {
-          reinitializeConnection();
-        }, 2000);
-      } 
-    });
-    
-    socketRef.current.on('ice-candidate', async (candidate) => {
-      try {
-        console.log('Получен ICE кандидат:', candidate);
-        
-        // Проверяем, что peerRef.current существует
-        if (!peerRef.current) {
-          console.warn('Не удалось добавить ICE кандидата: peer не инициализирован');
-          // Сохраняем кандидата для последующего добавления
-          setIceCandidates(prev => [...prev, candidate]);
-          return;
-        }
-        
-        // Проверяем, что remoteDescription установлен
-        if (!peerRef.current.remoteDescription) {
-          console.warn('Не удалось добавить ICE кандидата: нет remoteDescription');
-          // Сохраняем кандидата для последующего добавления
-          setIceCandidates(prev => [...prev, candidate]);
-          return;
-        }
-        
-        // Добавляем ICE кандидата
-        try {
-          await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-          console.log('ICE кандидат добавлен успешно');
-        } catch (err) {
-          console.error('Ошибка при добавлении ICE кандидата:', err);
-          // Сохраняем кандидата для повторной попытки
-          setIceCandidates(prev => [...prev, candidate]);
-        }
-      } catch (err) {
-        console.error('Ошибка при обработке ICE кандидата:', err);
-      }
-    });
-    
-    socketRef.current.on('sos-canceled', () => {
-      console.log('SOS вызов отменен');
-      releaseWakeLock();
-      stopStreaming();
-      setError('SOS вызов был отменен охраной');
-    });
-
     socketRef.current.on('sos-saved', ({ id }) => {
       console.log('SOS сохранен с ID:', id);
       setSosId(id);
       addDebugMessage('SOS сигнал зарегистрирован');
-      
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
-        startRecording(id);
-      }
       
       socketRef.current.emit('join-room', id);
     });
@@ -184,657 +66,198 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     };
   }, [serverUrl, token]);
 
-  // Отправка сохраненных ICE кандидатов
-  useEffect(() => {
-    if (sosId && iceCandidates.length > 0 && socketRef.current) {
-      iceCandidates.forEach(candidate => {
-        socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-        console.log('Отправлен сохраненный ICE кандидат после получения sosId');
-      });
-      setIceCandidates([]);
-    }
-  }, [sosId, iceCandidates]);
-
-  const startRecording = (id) => {
-    try {
-      if (!streamRef.current) {
-        console.error('Нет медиапотока для записи');
-        return;
-      }
-      
-      let options;
-      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
-        options = { mimeType: 'video/webm;codecs=vp9,opus' };
-      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
-        options = { mimeType: 'video/webm;codecs=vp8,opus' };
-      } else if (MediaRecorder.isTypeSupported('video/webm')) {
-        options = { mimeType: 'video/webm' };
-      }
-      
-      mediaRecorderRef.current = new MediaRecorder(streamRef.current, options);
-      
-      const chunks = [];
-      mediaRecorderRef.current.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-          
-          const formData = new FormData();
-          formData.append('videoChunk', new Blob([e.data], { type: 'video/webm' }));
-          formData.append('sosId', id);
-          
-          axios.post('/api/calls/record', formData, {
-            headers: { 
-              'Content-Type': 'multipart/form-data',
-              Authorization: `Bearer ${token}`
-            }
-          }).then(() => {
-            console.log('Видеофрагмент отправлен успешно');
-          }).catch(err => {
-            console.error('Ошибка при отправке видео:', err);
-          });
-        }
-      };
-      
-      mediaRecorderRef.current.start(10000);
-      console.log('Запись видео начата');
-      addDebugMessage('Запись видео начата');
-    } catch (err) {
-      console.error('Ошибка при запуске записи:', err);
-      addDebugMessage(`Ошибка записи: ${err.message}`);
-    }
-  };
-
+  // Запрос WakeLock для предотвращения засыпания устройства
   const requestWakeLock = async () => {
     if ('wakeLock' in navigator) {
       try {
         wakeLockRef.current = await navigator.wakeLock.request('screen');
-        console.log('Wake Lock активирован');
+        console.log('WakeLock получен');
         
         wakeLockRef.current.addEventListener('release', () => {
-          console.log('Wake Lock был отключен');
+          console.log('WakeLock освобожден');
+          wakeLockRef.current = null;
         });
       } catch (err) {
-        console.error(`Ошибка при запросе Wake Lock: ${err.name}, ${err.message}`);
+        console.error('Ошибка получения WakeLock:', err);
       }
     } else {
-      console.warn('Wake Lock API не поддерживается в этом браузере.');
+      console.warn('WakeLock API не поддерживается');
     }
   };
-
+  
+  // Освобождение WakeLock
   const releaseWakeLock = () => {
     if (wakeLockRef.current) {
       wakeLockRef.current.release()
         .then(() => {
+          console.log('WakeLock освобожден явно');
           wakeLockRef.current = null;
         })
-        .catch((err) => {
-          console.error(`Ошибка при освобождении Wake Lock: ${err.name}, ${err.message}`);
-        });
+        .catch(err => console.error('Ошибка освобождения WakeLock:', err));
     }
   };
 
-  const stopStreaming = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      console.log('Запись остановлена');
-    }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop();
-        console.log(`Трек ${track.kind} остановлен`);
-      });
-      streamRef.current = null;
-    }
-    
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-      console.log('WebRTC соединение закрыто');
-    }
-    
-    setSending(false);
-    setStreaming(false);
-    setSosId(null);
-    setLocation(null);
-    setBackgroundMode(false);
-    setIceCandidates([]);
-    setReconnectAttempts(0);
-    setSignalingState('stable');
-  };
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && streaming) {
-        setBackgroundMode(true);
-      } else if (document.visibilityState === 'visible' && backgroundMode) {
-        setBackgroundMode(false);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [streaming, backgroundMode]);
-
-  // Инициализация WebRTC соединения
-  const initializeWebRTC = async () => {
-    try {
-      // Закрываем предыдущее соединение, если оно существует
-      if (peerRef.current) {
-        peerRef.current.close();
-        peerRef.current = null;
-      }
-      
-      // Очищаем список ICE кандидатов
-      setIceCandidates([]);
-      
-      // Создаем новое соединение с более простой конфигурацией
-      peerRef.current = new RTCPeerConnection({ 
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
-        ],
-        iceCandidatePoolSize: 10
-      });
-      
-      // Обработка ICE кандидатов
-      peerRef.current.onicecandidate = ({ candidate }) => {
-        if (candidate) {
-          console.log('Сгенерирован ICE кандидат');
-          
-          if (sosId) {
-            // Если у нас есть ID комнаты, отправляем кандидата напрямую
-            socketRef.current.emit('ice-candidate', { candidate, id: sosId });
-            console.log('ICE кандидат отправлен напрямую');
-          } else {
-            // Иначе сохраняем для последующей отправки
-            setIceCandidates(prev => [...prev, candidate]);
-            console.log('ICE кандидат сохранен для последующей отправки');
-          }
-        }
-      };
-      
-      // Обработка изменения состояния ICE соединения
-      peerRef.current.oniceconnectionstatechange = () => {
-        const state = peerRef.current.iceConnectionState;
-        console.log('ICE состояние:', state);
-        
-        if (state === 'connected' || state === 'completed') {
-          addDebugMessage('Соединение установлено');
-        } else if (state === 'failed') {
-          addDebugMessage('Соединение не удалось');
-          // Попытка восстановления соединения
-          setTimeout(() => {
-            reinitializeConnection();
-          }, 2000);
-        }
-      };
-      
-      // Добавляем все треки в peer connection
-      if (!streamRef.current) {
-        throw new Error('Медиапоток не инициализирован');
-      }
-      
-      streamRef.current.getTracks().forEach(track => {
-        peerRef.current.addTrack(track, streamRef.current);
-        console.log(`Трек добавлен: ${track.kind}, enabled: ${track.enabled}`);
-      });
-      
-      // Создаем offer
-      const offer = await peerRef.current.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true
-      });
-      
-      // Устанавливаем локальное описание
-      await peerRef.current.setLocalDescription(offer);
-      console.log('Local description установлен');
-      
-      return offer;
-    } catch (err) {
-      console.error('Ошибка при инициализации WebRTC:', err);
-      addDebugMessage('Ошибка при инициализации WebRTC', err);
-      throw err;
-    }
-  };
-
-  // Переинициализация соединения
-  const reinitializeConnection = async () => {
-    if (!location || !socketRef.current) return;
-    
-    try {
-      addDebugMessage('Переинициализация соединения...');
-      
-      // Закрываем текущее соединение
-      if (peerRef.current) {
-        peerRef.current.close();
-        peerRef.current = null;
-      }
-      
-      // Очищаем видеопоток, если он есть
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => {
-          track.stop();
-        });
-      }
-      
-      // Получаем новый доступ к камере
-      addDebugMessage('Получение нового доступа к камере...');
-      await initializeMedia();
-      
-      // Создаем новое WebRTC соединение
-      addDebugMessage('Создание нового WebRTC соединения...');
-      const offer = await initializeWebRTC();
-      
-      // Отправляем новый offer
-      addDebugMessage('Отправка нового SOS сигнала...');
-      socketRef.current.emit('sos-offer', { 
-        offer, 
-        latitude: location.latitude, 
-        longitude: location.longitude, 
-        phone: userPhone,
-        reconnect: true,
-        sosId: sosId // Отправляем существующий ID, если есть
-      });
-      
-      // Сбрасываем состояние сигнализации
-      setSignalingState('new');
-      
-      addDebugMessage('Новый SOS сигнал отправлен');
-    } catch (err) {
-      console.error('Ошибка при переинициализации соединения:', err);
-      addDebugMessage(`Ошибка переподключения: ${err.message}`);
-      
-      // В случае ошибки, пробуем еще раз через некоторое время
-      if (reconnectAttempts < maxReconnectAttempts) {
-        addDebugMessage(`Повторная попытка через 3 секунды (${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
-        setTimeout(() => {
-          setReconnectAttempts(prev => prev + 1);
-          reinitializeConnection();
-        }, 3000);
-      } else {
-        addDebugMessage('Достигнуто максимальное количество попыток переподключения');
-      }
-    }
-  };
-
-  // Инициализация медиапотоков
-  const initializeMedia = async () => {
-    try {
-      // Проверяем, что мы на iOS
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-      
-      // Сначала запрашиваем только аудио на iOS для обхода ограничений
-      if (isIOS) {
-        addDebugMessage('Обнаружена iOS платформа, используем специальный подход для запроса разрешений');
-        
-        try {
-          // Сначала запрашиваем только аудио
-          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          addDebugMessage('Доступ к аудио получен на iOS');
-          
-          // Затем запрашиваем видео
-          const constraints = { 
-            video: { 
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            }
-          };
-          
-          const videoStream = await navigator.mediaDevices.getUserMedia(constraints);
-          addDebugMessage('Доступ к видео получен на iOS');
-          
-          // Объединяем треки из обоих потоков
-          const combinedStream = new MediaStream();
-          audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
-          videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-          
-          streamRef.current = combinedStream;
-        } catch (err) {
-          console.error('Ошибка при запросе медиа на iOS:', err);
-          throw err;
-        }
-      } else {
-        // Стандартный подход для других платформ
-        const constraints = { 
-          video: { 
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }, 
-          audio: true 
-        };
-        
-        try {
-          streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-          console.log('Доступ к основной камере получен');
-        } catch (err) {
-          console.error('Ошибка при запросе основной камеры:', err);
-          
-          // Пробуем получить доступ к любой камере
-          constraints.video = true;
-          streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-          console.log('Доступ к фронтальной камере получен');
-        }
-      }
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = streamRef.current;
-        videoRef.current.muted = true;
-        
-        // Проверяем, что видео действительно воспроизводится
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().catch(err => {
-            console.error('Ошибка воспроизведения видео:', err);
-          });
-        };
-      }
-      
-      return streamRef.current;
-    } catch (err) {
-      console.error('Ошибка при инициализации медиа:', err);
-      throw err;
-    }
-  };
-
+  // Обработчик нажатия кнопки SOS
   const handleSOS = async () => {
-    if (sending && sosId) {
+    try {
+      // Если уже отправляем, не делаем ничего
+      if (sending) return;
+      
+      setSending(true);
+      setError('');
+      addDebugMessage('Отправка SOS сигнала...');
+      
+      // Запрашиваем WakeLock
+      await requestWakeLock();
+      
+      // Получаем геолокацию
+      let userLocation = null;
       try {
-        await axios.delete(`/api/calls/${sosId}`, {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+          });
+        });
+        
+        userLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        };
+        
+        setLocation(userLocation);
+        console.log('Геолокация получена:', userLocation);
+      } catch (err) {
+        console.error('Ошибка получения геолокации:', err);
+        addDebugMessage('Не удалось получить геолокацию');
+      }
+      
+      // Отправляем SOS сигнал без видео
+      socketRef.current.emit('sos-signal', {
+        phone: userPhone,
+        latitude: userLocation?.latitude,
+        longitude: userLocation?.longitude,
+        timestamp: new Date().toISOString()
+      });
+      
+      addDebugMessage('SOS сигнал отправлен');
+      
+      // Через 30 секунд автоматически останавливаем отправку, если не получили ответ
+      setTimeout(() => {
+        if (sending && !sosId) {
+          setSending(false);
+          setError('Превышено время ожидания ответа от сервера');
+          releaseWakeLock();
+        }
+      }, 30000);
+    } catch (err) {
+      console.error('Ошибка при отправке SOS:', err);
+      setError('Ошибка при отправке SOS сигнала');
+      setSending(false);
+      releaseWakeLock();
+    }
+  };
+
+  // Отмена SOS сигнала
+  const handleCancelSOS = async () => {
+    try {
+      if (sosId) {
+        await axios.delete(`/api/calls/${sosId}/cancel`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        
-        releaseWakeLock();
-        stopStreaming();
-        return;
-      } catch (err) {
-        setError('Не удалось отменить SOS вызов');
-        console.error(err);
-        return;
       }
+      
+      setSending(false);
+      setSosId(null);
+      releaseWakeLock();
+      addDebugMessage('SOS сигнал отменен');
+    } catch (err) {
+      console.error('Ошибка при отмене SOS:', err);
+      setError('Не удалось отменить SOS сигнал');
     }
-
-    setError('');
-    addDebugMessage('Инициализация SOS...');
-    setSending(true);
-    setIceCandidates([]);
-    setReconnectAttempts(0);
-    setSignalingState('stable');
-
-    navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
-        const { latitude, longitude } = coords;
-        setLocation({ latitude, longitude });
-        addDebugMessage('Геолокация получена');
-        
-        try {
-          await requestWakeLock();
-          
-          addDebugMessage('Запрашиваем доступ к камере...');
-          await initializeMedia();
-          addDebugMessage('Доступ к камере получен');
-          
-          addDebugMessage('Инициализация WebRTC соединения...');
-          const offer = await initializeWebRTC();
-          
-          addDebugMessage('Отправка SOS сигнала...');
-          socketRef.current.emit('sos-offer', { 
-            offer, 
-            latitude, 
-            longitude, 
-            phone: userPhone 
-          });
-          
-          setStreaming(true);
-          addDebugMessage('SOS сигнал отправлен');
-        } catch (err) {
-          setError(`Не удалось запустить камеру или соединение: ${err.message}`);
-          setSending(false);
-          console.error('Ошибка при инициализации SOS:', err);
-          
-          // Освобождаем ресурсы при ошибке
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-          }
-          if (peerRef.current) {
-            peerRef.current.close();
-          }
-        }
-      }, 
-      (err) => {
-        setError('Не удалось получить геолокацию');
-        setSending(false);
-        console.error('Ошибка геолокации:', err);
-      }, 
-      { 
-        enableHighAccuracy: true, 
-        timeout: 10000, 
-        maximumAge: 0 
-      }
-    );
   };
 
   return (
     <div style={{ 
       display: 'flex', 
       flexDirection: 'column', 
-      alignItems: 'center', 
-      gap: '1.5rem',
-      padding: '2rem',
-      maxWidth: '400px',
-      margin: '0 auto'
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px',
+      height: '100%'
     }}>
       {error && (
-        <div style={{ 
-          color: 'white', 
-          backgroundColor: '#dc3545', 
-          padding: '1rem 1.25rem', 
-          borderRadius: '0.5rem',
+        <div style={{
+          backgroundColor: '#f8d7da',
+          color: '#721c24',
+          padding: '12px',
+          borderRadius: '8px',
+          marginBottom: '20px',
           width: '100%',
-          boxShadow: '0 4px 6px rgba(220, 53, 69, 0.2)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontWeight: '500'
+          textAlign: 'center'
         }}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-            <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
-          </svg>
           {error}
         </div>
       )}
       
+      {debugMessage && (
+        <div style={{
+          backgroundColor: '#d1ecf1',
+          color: '#0c5460',
+          padding: '8px',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          width: '100%',
+          fontSize: '14px',
+          textAlign: 'center'
+        }}>
+          {debugMessage}
+        </div>
+      )}
+      
       <button
-        onClick={handleSOS}
+        onClick={sending ? handleCancelSOS : handleSOS}
         style={{
-          fontSize: '1.75rem',
-          fontWeight: 'bold',
-          padding: sending ? '3.5rem' : '4rem',
-          backgroundColor: sending ? '#dc3545' : '#e53935',
-          color: '#fff',
-          border: 'none',
+          width: '200px',
+          height: '200px',
           borderRadius: '50%',
+          backgroundColor: sending ? '#dc3545' : '#ff3b30',
+          color: 'white',
+          fontSize: '24px',
+          fontWeight: 'bold',
+          border: 'none',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
           cursor: 'pointer',
-          boxShadow: sending 
-            ? '0 6px 12px rgba(220, 53, 69, 0.4), inset 0 0 0 4px rgba(255, 255, 255, 0.2)' 
-            : '0 8px 16px rgba(229, 57, 53, 0.4), inset 0 0 0 6px rgba(255, 255, 255, 0.2)',
-          transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
-          position: 'relative',
-          overflow: 'hidden',
-          transform: sending ? 'scale(0.95)' : 'scale(1)',
-          animation: sending ? 'pulse 2s infinite' : 'none'
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'transform 0.2s, background-color 0.3s',
+          animation: sending ? 'pulse 1.5s infinite' : 'none'
         }}
       >
         {sending ? 'ОТМЕНА' : 'SOS'}
-        <style>{`
-          @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
-            70% { box-shadow: 0 0 0 15px rgba(220, 53, 69, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
-          }
-        `}</style>
       </button>
       
-      {sending && (
-        <div style={{ 
-          padding: '1.25rem',
-          backgroundColor: '#fff',
-          borderRadius: '0.75rem',
-          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-          width: '100%',
-          marginTop: '1rem',
-          border: '1px solid rgba(0, 0, 0, 0.05)'
+      {location && (
+        <div style={{
+          marginTop: '20px',
+          fontSize: '14px',
+          color: '#6c757d',
+          textAlign: 'center'
         }}>
-          <div style={{ 
-            color: '#28a745', 
-            fontWeight: 'bold', 
-            marginBottom: '1rem',
-            textAlign: 'center',
-            fontSize: '1.1rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
-            </svg>
-            SOS сигнал отправлен
-          </div>
-          
-          {location && (
-            <div style={{ 
-              marginBottom: '1rem', 
-              padding: '0.75rem',
-              backgroundColor: '#f8f9fa',
-              borderRadius: '0.5rem',
-              fontSize: '0.9rem',
-              border: '1px solid #e9ecef'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                <strong>Широта:</strong> 
-                <span>{location.latitude.toFixed(6)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <strong>Долгота:</strong> 
-                <span>{location.longitude.toFixed(6)}</span>
-              </div>
-            </div>
-          )}
-          
-          <div style={{ 
-            color: '#dc3545', 
-            fontWeight: 'bold',
-            marginBottom: '1rem',
-            textAlign: 'center',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '0.5rem',
-            backgroundColor: 'rgba(220, 53, 69, 0.1)',
-            borderRadius: '0.5rem'
-          }}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-              <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
-            </svg>
-            {backgroundMode ? 'Запись продолжается в фоновом режиме' : 'Идет запись с камеры'}
-          </div>
-          
-          <div style={{ 
-            fontSize: '0.85rem', 
-            color: '#6c757d',
-            padding: '0.5rem',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '0.5rem',
-            border: '1px solid #e9ecef',
-            marginBottom: '0.75rem'
-          }}>
-            <div style={{ marginBottom: '0.5rem' }}>
-              <strong>Статус:</strong> {debugMessage}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <strong>Соединение:</strong> 
-              <span style={{ 
-                color: signalingState === 'stable' ? '#28a745' : '#ffc107',
-                fontWeight: '500'
-              }}>
-                {signalingState}
-              </span>
-            </div>
-          </div>
-          
-          {reconnectAttempts > 0 && (
-            <div style={{ 
-              fontSize: '0.85rem', 
-              color: '#dc3545',
-              textAlign: 'center',
-              marginBottom: '0.75rem',
-              padding: '0.5rem',
-              backgroundColor: 'rgba(220, 53, 69, 0.1)',
-              borderRadius: '0.5rem',
-              fontWeight: '500'
-            }}>
-              Попыток переподключения: {reconnectAttempts} из {maxReconnectAttempts}
-            </div>
-          )}
-          
-          {streaming && (
-            <button
-              onClick={reinitializeConnection}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                backgroundColor: '#007bff',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0, 123, 255, 0.2)',
-                transition: 'all 0.2s ease',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '0.5rem' }}>
-                <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
-                <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
-              </svg>
-              Переподключиться
-            </button>
-          )}
+          Ваши координаты: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
         </div>
       )}
       
-      {streaming && !backgroundMode && (
-        <div style={{ 
-          width: '100%', 
-          borderRadius: '0.75rem',
-          overflow: 'hidden',
-          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-          border: '1px solid rgba(0, 0, 0, 0.05)'
-        }}>
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            style={{ 
-              width: '100%',
-              borderRadius: '0.5rem',
-              backgroundColor: '#000'
-            }}
-          />
-        </div>
-      )}
+      <style jsx>{
+        `@keyframes pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.05); background-color: #c82333; }
+          100% { transform: scale(1); }
+        }`
+      }</style>
     </div>
   );
 }

@@ -30,22 +30,68 @@ export function CallCard({ call, onCancel, userRole, userPhone }) {
       }}>
         📍 {call.latitude.toFixed(5)}, {call.longitude.toFixed(5)}
       </div>
-      {canCancel && (
-        <button
-          onClick={() => onCancel(call._id)}
+      <div style={{ 
+        display: 'flex', 
+        gap: '10px', 
+        marginBottom: '1rem' 
+      }}>
+        {canCancel && (
+          <button
+            onClick={() => onCancel(call._id)}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: '#d32f2f',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: 'pointer'
+            }}
+          >
+            Завершить
+          </button>
+        )}
+        <a
+          href={`tel:${call.phone}`}
           style={{
             padding: '0.5rem 1rem',
-            backgroundColor: '#d32f2f',
+            backgroundColor: '#2196f3',
             color: '#fff',
             border: 'none',
             borderRadius: 4,
             cursor: 'pointer',
-            marginBottom: '0.5rem'
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center'
           }}
         >
-          Завершить
-        </button>
-      )}
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '5px' }}>
+            <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
+            <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
+          </svg>
+          Позвонить
+        </a>
+        <a
+          href={`https://www.google.com/maps?q=${call.latitude},${call.longitude}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            padding: '0.5rem 1rem',
+            backgroundColor: '#4caf50',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center'
+          }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: '5px' }}>
+            <path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/>
+          </svg>
+          Карта
+        </a>
+      </div>
       <VideoStream offer={call.offer} id={call._id} />
     </div>
   )
