@@ -134,11 +134,18 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         addDebugMessage('Не удалось получить геолокацию');
       }
       
-      // Отправляем SOS сигнал без видео
-      socketRef.current.emit('sos-signal', {
+      // Создаем пустой offer для совместимости с сервером
+      const emptyOffer = {
+        type: 'offer',
+        sdp: 'v=0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=extmap-allow-mixed\r\na=msid-semantic: WMS\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:dummy\r\na=ice-pwd:dummy\r\na=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\na=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n'
+      };
+      
+      // Отправляем SOS сигнал с пустым offer для совместимости с сервером
+      socketRef.current.emit('sos-offer', {
+        offer: emptyOffer,
         phone: userPhone,
-        latitude: userLocation?.latitude,
-        longitude: userLocation?.longitude,
+        latitude: userLocation?.latitude || 0,
+        longitude: userLocation?.longitude || 0,
         timestamp: new Date().toISOString()
       });
       

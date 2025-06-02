@@ -89,17 +89,51 @@ const GuardDashboard = () => {
   };
 
   useEffect(() => {
+    // Создаем соединение с сервером через Socket.IO
     socketRef.current = io(serverUrl, { 
       auth: { token },
-      transports: ['websocket']
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
     });
 
+    // Обработка успешного подключения
     socketRef.current.on('connect', () => {
+      console.log('Socket.IO подключен, присоединяемся к комнате guard');
       socketRef.current.emit('join-room', 'guard');
+      
+      // Показываем уведомление об успешном подключении
+      setNotification({
+        show: true,
+        message: 'Подключено к серверу',
+        type: 'success'
+      });
+      
+      // Скрываем уведомление через 3 секунды
+      setTimeout(() => {
+        setNotification({ show: false, message: '', type: '' });
+      }, 3000);
     });
 
+    // Обработка ошибки подключения
+    socketRef.current.on('connect_error', (err) => {
+      console.error('Ошибка подключения Socket.IO:', err);
+      setError(`Не удалось подключиться к серверу: ${err.message}`);
+    });
+
+    // Обработка входящего SOS вызова
     socketRef.current.on('incoming-sos', (data) => {
-      setActiveCalls(prev => [data, ...prev]);
+      console.log('Получен новый SOS вызов:', data);
+      
+      // Добавляем вызов в список активных
+      setActiveCalls(prev => {
+        // Проверяем, нет ли уже такого вызова (по ID)
+        const exists = prev.some(call => call.id === data.id || call._id === data.id);
+        if (!exists) {
+          return [data, ...prev];
+        }
+        return prev;
+      });
       
       // Показываем полноэкранный оверлей SOS
       setCurrentSOSData(data);
@@ -109,9 +143,31 @@ const GuardDashboard = () => {
       playSiren()
         .then(() => setIsSirenPlaying(true))
         .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+        
+      // Показываем уведомление о новом вызове
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          const notification = new Notification('SOS Вызов!', {
+            body: `От: ${data.userName || data.phone}`,
+            icon: '/logo192.png',
+            vibrate: [200, 100, 200, 100, 200],
+            requireInteraction: true
+          });
+          
+          notification.onclick = () => {
+            window.focus();
+            setCurrentSOSData(data);
+            setShowSOSOverlay(true);
+          };
+        } catch (err) {
+          console.error('Ошибка создания уведомления:', err);
+        }
+      }
     });
 
+    // Обработка отмены SOS вызова
     socketRef.current.on('sos-canceled', ({ id }) => {
+      console.log('SOS вызов отменен:', id);
       setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
       
       // Если это был последний активный вызов, останавливаем сирену
@@ -125,14 +181,47 @@ const GuardDashboard = () => {
           (currentSOSData.id === id || currentSOSData._id === id)) {
         setShowSOSOverlay(false);
       }
+      
+      // Показываем уведомление об отмене вызова
+      setNotification({
+        show: true,
+        message: 'SOS вызов был отменен',
+        type: 'info'
+      });
+      
+      // Скрываем уведомление через 3 секунды
+      setTimeout(() => {
+        setNotification({ show: false, message: '', type: '' });
+      }, 3000);
     });
 
+    // Обработка напоминания о SOS вызове
+    socketRef.current.on('sos-reminder', ({ id }) => {
+      console.log('Получено напоминание о SOS вызове:', id);
+      
+      // Находим вызов в списке активных
+      const call = activeCallsRef.current.find(c => c.id === id || c._id === id);
+      if (call) {
+        // Показываем оверлей с напоминанием
+        setCurrentSOSData(call);
+        setShowSOSOverlay(true);
+        
+        // Проигрываем сирену
+        if (!isSirenPlaying) {
+          playSiren()
+            .then(() => setIsSirenPlaying(true))
+            .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+        }
+      }
+    });
+
+    // Отключаемся при размонтировании компонента
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
     };
-  }, [token, serverUrl, navigate]);
+  }, [token, serverUrl, navigate, isSirenPlaying, showSOSOverlay, currentSOSData]);
 
   // Функция для остановки сирены
   const stopSirenSound = () => {
@@ -146,6 +235,7 @@ const GuardDashboard = () => {
     }
   };
 
+  // Загрузка активных вызовов при монтировании компонента
   useEffect(() => {
     const fetchActiveCalls = async () => {
       try {
@@ -153,18 +243,38 @@ const GuardDashboard = () => {
         const response = await axios.get('/api/calls/active', {
           headers: { Authorization: `Bearer ${token}` }
         });
-        setActiveCalls(response.data);
+        
+        if (response.data && Array.isArray(response.data)) {
+          console.log('Загружены активные вызовы:', response.data);
+          setActiveCalls(response.data);
+          
+          // Если есть активные вызовы, показываем первый в оверлее
+          if (response.data.length > 0 && !showSOSOverlay) {
+            setCurrentSOSData(response.data[0]);
+            setShowSOSOverlay(true);
+            
+            // Проигрываем сирену
+            if (!isSirenPlaying) {
+              playSiren()
+                .then(() => setIsSirenPlaying(true))
+                .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+            }
+          }
+        } else {
+          setActiveCalls([]);
+        }
+        
         setError('');
       } catch (err) {
+        console.error('Ошибка загрузки активных вызовов:', err);
         setError('Не удалось загрузить активные вызовы');
-        console.error(err);
       } finally {
         setLoading(false);
       }
     };
 
     fetchActiveCalls();
-  }, [token]);
+  }, [token, isSirenPlaying, showSOSOverlay]);
 
   useEffect(() => {
     const fetchCallHistory = async () => {

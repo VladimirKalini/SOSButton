@@ -26,13 +26,43 @@ if ('serviceWorker' in navigator) {
       console.log(`Платформа: ${platform}`);
       
       // Регистрируем сервис-воркер
-      const registration = await navigator.serviceWorker.register('/sw.js');
+      const registration = await navigator.serviceWorker.register('/sw.js', {
+        scope: '/',
+        updateViaCache: 'none'
+      });
       console.log('Service Worker зарегистрирован:', registration);
       
       // Запрашиваем разрешение на показ уведомлений
-      if ('Notification' in window && Notification.permission !== 'granted') {
+      if ('Notification' in window) {
         const permission = await Notification.requestPermission();
         console.log(`Разрешение на уведомления: ${permission}`);
+        
+        // Если разрешение получено, подписываемся на push-уведомления
+        if (permission === 'granted' && 'PushManager' in window) {
+          try {
+            // Проверяем наличие существующей подписки
+            let subscription = await registration.pushManager.getSubscription();
+            
+            if (!subscription) {
+              // Создаем новую подписку
+              const publicVapidKey = 'BLBz4TFiSfAM9qfyX3GJQrHXqUAzTVJ6UQzADDw_wXJYdqi_Z3X6eRLTZuNnTwAZrUU7hjHyRwrNfwOxGwODnxA';
+              
+              subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+              });
+              
+              console.log('Создана новая push-подписка:', subscription);
+              
+              // Здесь можно отправить подписку на сервер для сохранения
+              // await axios.post('/api/push/subscribe', { subscription });
+            } else {
+              console.log('Используется существующая push-подписка:', subscription);
+            }
+          } catch (err) {
+            console.error('Ошибка подписки на push-уведомления:', err);
+          }
+        }
       }
       
       // Настраиваем канал уведомлений для Android
@@ -57,10 +87,35 @@ if ('serviceWorker' in navigator) {
           });
         }
       }
+      
+      // Отправляем тестовое уведомление для проверки
+      setTimeout(() => {
+        if (registration.active) {
+          registration.active.postMessage({
+            action: 'send-test-notification'
+          });
+        }
+      }, 5000);
     } catch (err) {
       console.error('Ошибка регистрации SW:', err);
     }
   });
+}
+
+// Функция для конвертации base64 в Uint8Array (для applicationServerKey)
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
 }
 
 // 3) Отправляем метрики производительности

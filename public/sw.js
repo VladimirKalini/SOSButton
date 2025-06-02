@@ -72,7 +72,25 @@ let audioPlayer = null;
 
 // Обработка push-уведомлений
 self.addEventListener('push', event => {
-  const data = event.data.json();
+  console.log('Получено push-уведомление:', event.data ? event.data.text() : 'Нет данных');
+  
+  let data;
+  try {
+    data = event.data.json();
+  } catch (e) {
+    data = {
+      title: 'SOS Сигнал',
+      body: 'Получен экстренный вызов',
+      data: {
+        url: '/',
+        fullScreenIntent: true,
+        soundName: 'siren.mp3'
+      }
+    };
+  }
+  
+  console.log('Данные push-уведомления:', data);
+  
   const options = {
     body: data.body || 'SOS вызов! Требуется подтверждение.',
     icon: '/logo192.png',
@@ -219,5 +237,16 @@ self.addEventListener('message', event => {
       audioPlayer.currentTime = 0;
       audioPlayer = null;
     }
+  }
+  
+  // Обработка запроса на отправку тестового push-уведомления
+  if (action === 'send-test-notification') {
+    self.registration.showNotification('Тестовое уведомление', {
+      body: 'Проверка работы уведомлений',
+      icon: '/logo192.png',
+      vibrate: [200, 100, 200],
+      badge: '/logo192.png',
+      tag: 'test-notification'
+    });
   }
 });
