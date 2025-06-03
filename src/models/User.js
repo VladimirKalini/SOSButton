@@ -10,7 +10,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    match: [/^\+\d{11,15}$/, 'Неправильный формат телефона']
+    match: [/^\+\d{12}$/, 'Телефон должен содержать ровно 12 цифр и начинаться с +']
   },
   name: {
     type: String,

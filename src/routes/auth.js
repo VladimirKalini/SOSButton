@@ -7,13 +7,13 @@ const User = require('../models/User');
 const router = express.Router();
 
 const registerSchema = Joi.object({
-  phone: Joi.string().pattern(/^\+\d{11,15}$/).required(),
+  phone: Joi.string().pattern(/^\+\d{12}$/).required(),
   password: Joi.string().min(6).required(),
   name: Joi.string().required().trim()
 });
 
 const loginSchema = Joi.object({
-  phone: Joi.string().pattern(/^\+\d{11,15}$/).required(),
+  phone: Joi.string().pattern(/^\+\d{12}$/).required(),
   password: Joi.string().required()
 });
 

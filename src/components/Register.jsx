@@ -98,7 +98,8 @@ export default function Register() {
   const navigate = useNavigate();
 
   const validatePhone = (phone) => {
-    return /^\+\d{11,15}$/.test(phone);
+    // Проверяем, что номер начинается с + и содержит ровно 12 цифр после +
+    return /^\+\d{12}$/.test(phone);
   };
 
   const handleRegister = async () => {
@@ -113,7 +114,7 @@ export default function Register() {
 
     // Проверка телефона
     if (!validatePhone(phone)) {
-      setError('Телефон должен быть в формате +79001234567');
+      setError('Телефон должен содержать ровно 12 цифр и начинаться с +');
       return;
     }
 
@@ -174,7 +175,7 @@ export default function Register() {
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
-            placeholder="+79001234567"
+            placeholder="+380998574732"
             required
             style={styles.input}
           />

@@ -122,7 +122,7 @@ export default function LoginForm() {
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
-            placeholder="+79001234567"
+            placeholder="+380998574732"
             required
             style={styles.input}
           />
