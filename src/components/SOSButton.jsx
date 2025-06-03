@@ -55,6 +55,16 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       socketRef.current.emit('join-room', id);
     });
 
+    // Обработка подтверждения отмены SOS сигнала
+    socketRef.current.on('sos-cancel-confirmed', ({ id }) => {
+      console.log('Получено подтверждение отмены SOS:', id);
+      if (id === sosId) {
+        setSending(false);
+        setSosId(null);
+        addDebugMessage('SOS сигнал успешно отменен');
+      }
+    });
+
     // Обработка пинга для поддержания соединения
     socketRef.current.on('ping', () => {
       socketRef.current.emit('pong');
@@ -65,7 +75,28 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         socketRef.current.disconnect();
       }
     };
-  }, [serverUrl, token]);
+  }, [serverUrl, token, sosId]);
+
+  // Добавляем обработчик сообщений от service worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      const messageHandler = (event) => {
+        const { action, success } = event.data || {};
+        console.log('Получено сообщение от service worker:', action);
+        
+        if (action === 'siren-stopped' && success) {
+          console.log('Получено подтверждение остановки сирены');
+          // Можно добавить дополнительную логику при необходимости
+        }
+      };
+      
+      navigator.serviceWorker.addEventListener('message', messageHandler);
+      
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', messageHandler);
+      };
+    }
+  }, []);
 
   // Запрос WakeLock для предотвращения засыпания устройства
   const requestWakeLock = async () => {
@@ -132,6 +163,12 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       // Если уже отправляем, не делаем ничего
       if (sending) return;
       
+      // Если уже есть активный SOS, показываем сообщение
+      if (sosId) {
+        addDebugMessage('У вас уже есть активный SOS сигнал');
+        return;
+      }
+      
       setSending(true);
       setError('');
       addDebugMessage('Отправка SOS сигнала...');
@@ -149,6 +186,24 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
         // Если не удалось получить геолокацию, используем нулевые координаты
         userLocation = { latitude: 0, longitude: 0, accuracy: 0 };
         addDebugMessage('Не удалось получить геолокацию. SOS будет отправлен без координат.');
+      }
+      
+      // Проверяем соединение с сервером
+      if (!socketRef.current || !socketRef.current.connected) {
+        addDebugMessage('Переподключение к серверу...');
+        
+        // Пробуем переподключиться
+        if (socketRef.current) {
+          socketRef.current.connect();
+        }
+        
+        // Ждем 2 секунды для переподключения
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Проверяем, удалось ли подключиться
+        if (!socketRef.current || !socketRef.current.connected) {
+          throw new Error('Не удалось подключиться к серверу');
+        }
       }
       
       // Отправляем SOS сигнал
@@ -171,7 +226,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       }, 30000);
     } catch (err) {
       console.error('Ошибка при отправке SOS:', err);
-      setError('Ошибка при отправке SOS сигнала');
+      setError(`Ошибка при отправке SOS сигнала: ${err.message}`);
       setSending(false);
       releaseWakeLock();
     }
@@ -180,19 +235,71 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   // Отмена SOS сигнала
   const handleCancelSOS = async () => {
     try {
-      if (sosId) {
-        await axios.delete(`/api/calls/${sosId}/cancel`, {
-          headers: { Authorization: `Bearer ${token}` }
+      // Показываем сообщение о процессе отмены
+      addDebugMessage('Отменяем SOS сигнал...');
+      
+      // Останавливаем звук сирены через service worker
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          action: 'stop-siren'
         });
+        console.log('Отправлен запрос на остановку сирены через service worker');
       }
       
+      // Останавливаем вибрацию на мобильных устройствах
+      if ('vibrate' in navigator) {
+        try {
+          navigator.vibrate(0); // 0 останавливает вибрацию
+          console.log('Вибрация остановлена');
+        } catch (err) {
+          console.error('Ошибка остановки вибрации:', err);
+        }
+      }
+      
+      if (sosId) {
+        // Отправляем событие отмены через сокет для немедленного уведомления охраны
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('cancel-sos', { id: sosId });
+          console.log('Отправлено событие отмены SOS через сокет');
+        }
+        
+        // Отправляем запрос на отмену через REST API
+        try {
+          await axios.delete(`/api/calls/${sosId}/cancel`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          console.log('SOS сигнал отменен через REST API');
+        } catch (apiError) {
+          console.error('Ошибка отмены через API:', apiError);
+          
+          // Если не удалось отменить через API, повторно пробуем через сокет
+          if (socketRef.current && socketRef.current.connected) {
+            console.log('Повторная попытка отмены через сокет');
+            socketRef.current.emit('cancel-sos', { id: sosId });
+          } else {
+            throw apiError; // Пробрасываем ошибку, если оба метода не сработали
+          }
+        }
+      }
+      
+      // Сбрасываем состояние даже если нет sosId
       setSending(false);
       setSosId(null);
       releaseWakeLock();
       addDebugMessage('SOS сигнал отменен');
+      
+      // Очищаем ошибки, которые могли быть
+      setError('');
     } catch (err) {
       console.error('Ошибка при отмене SOS:', err);
-      setError('Не удалось отменить SOS сигнал');
+      setError('Не удалось отменить SOS сигнал. Пожалуйста, попробуйте еще раз.');
+      
+      // Даже при ошибке отправки на сервер, сбрасываем состояние отправки через 3 секунды
+      // Это даст пользователю возможность увидеть ошибку и попробовать снова
+      setTimeout(() => {
+        setSending(false);
+        addDebugMessage('Состояние сброшено после ошибки');
+      }, 3000);
     }
   };
 

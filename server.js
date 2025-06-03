@@ -598,6 +598,36 @@ io.on('connection', socket => {
     }
   });
 
+  // Обработка отмены SOS сигнала через сокет
+  socket.on('cancel-sos', async ({ id }) => {
+    try {
+      logWithTime(`Получен запрос на отмену SOS ${id} через сокет`);
+      
+      // Находим вызов в базе данных
+      const sos = await Sos.findOne({ sosId: id });
+      
+      if (sos) {
+        // Обновляем статус вызова
+        sos.status = 'canceled';
+        sos.endedAt = new Date();
+        await sos.save();
+        
+        // Оповещаем охрану об отмене вызова
+        socket.to('guard').emit('sos-canceled', { id });
+        logWithTime(`Охрана уведомлена об отмене SOS ${id}`);
+        
+        // Отправляем подтверждение клиенту
+        socket.emit('sos-cancel-confirmed', { id });
+      } else {
+        logWithTime(`SOS ${id} не найден для отмены`);
+        socket.emit('error', { message: 'SOS вызов не найден' });
+      }
+    } catch (err) {
+      logWithTime(`Ошибка при отмене SOS через сокет: ${err.message}`);
+      socket.emit('error', { message: 'Не удалось отменить SOS сигнал' });
+    }
+  });
+
   // Обработка отключения
   socket.on('disconnect', () => {
     logWithTime(`Socket ${socket.id} отключен`);

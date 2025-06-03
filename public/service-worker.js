@@ -391,6 +391,31 @@ self.addEventListener('message', event => {
       audioPlayer.currentTime = 0;
       console.log('[Service Worker] Звук сирены остановлен по запросу клиента');
     }
+    
+    // Отправляем подтверждение клиенту
+    if (event.source) {
+      event.source.postMessage({
+        action: 'siren-stopped',
+        success: true
+      });
+    }
+    
+    // Закрываем все уведомления с тегом sos-notification
+    self.registration.getNotifications({ tag: 'sos-notification' })
+      .then(notifications => {
+        notifications.forEach(notification => {
+          notification.close();
+          console.log('[Service Worker] Закрыто уведомление по запросу клиента');
+        });
+      })
+      .catch(err => {
+        console.error('[Service Worker] Ошибка при закрытии уведомлений:', err);
+      });
+      
+    // Сбрасываем бейдж
+    if ('clearAppBadge' in navigator) {
+      navigator.clearAppBadge().catch(err => console.error('Ошибка сброса бейджа:', err));
+    }
   } else if (action === 'send-test-notification') {
     // Отправляем тестовое уведомление
     const clientPlatform = platform || getPlatform();
