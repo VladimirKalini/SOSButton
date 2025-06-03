@@ -13,6 +13,7 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
   const [debugMessage, setDebugMessage] = useState('');
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const maxReconnectAttempts = 3;
+  const [isRequestingLocation, setIsRequestingLocation] = useState(false);
 
   // Функция для логирования
   const addDebugMessage = (message, error = null) => {
@@ -97,6 +98,34 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
     }
   };
 
+  // Запрос разрешения на геолокацию
+  const requestLocationPermission = () => {
+    return new Promise((resolve, reject) => {
+      if ('geolocation' in navigator) {
+        setIsRequestingLocation(true);
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            setIsRequestingLocation(false);
+            resolve({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracy: position.coords.accuracy
+            });
+          },
+          (err) => {
+            setIsRequestingLocation(false);
+            console.error('Ошибка получения геолокации:', err);
+            // Не отклоняем промис, а возвращаем null
+            resolve(null);
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      } else {
+        resolve(null);
+      }
+    });
+  };
+
   // Обработчик нажатия кнопки SOS
   const handleSOS = async () => {
     try {
@@ -111,41 +140,22 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
       await requestWakeLock();
       
       // Получаем геолокацию
-      let userLocation = null;
-      try {
-        const position = await new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0
-          });
-        });
-        
-        userLocation = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy
-        };
-        
+      let userLocation = await requestLocationPermission();
+      
+      if (userLocation) {
         setLocation(userLocation);
         console.log('Геолокация получена:', userLocation);
-      } catch (err) {
-        console.error('Ошибка получения геолокации:', err);
-        addDebugMessage('Не удалось получить геолокацию');
+      } else {
+        // Если не удалось получить геолокацию, используем нулевые координаты
+        userLocation = { latitude: 0, longitude: 0, accuracy: 0 };
+        addDebugMessage('Не удалось получить геолокацию. SOS будет отправлен без координат.');
       }
       
-      // Создаем пустой offer для совместимости с сервером
-      const emptyOffer = {
-        type: 'offer',
-        sdp: 'v=0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=extmap-allow-mixed\r\na=msid-semantic: WMS\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:dummy\r\na=ice-pwd:dummy\r\na=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\na=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n'
-      };
-      
-      // Отправляем SOS сигнал с пустым offer для совместимости с сервером
+      // Отправляем SOS сигнал
       socketRef.current.emit('sos-offer', {
-        offer: emptyOffer,
         phone: userPhone,
-        latitude: userLocation?.latitude || 0,
-        longitude: userLocation?.longitude || 0,
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
         timestamp: new Date().toISOString()
       });
       
@@ -223,6 +233,20 @@ export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }
           {debugMessage}
         </div>
       )}
+      
+      {isRequestingLocation ? (
+        <div style={{
+          backgroundColor: '#fff3cd',
+          color: '#856404',
+          padding: '12px',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          width: '100%',
+          textAlign: 'center'
+        }}>
+          Запрашиваем разрешение на доступ к геолокации...
+        </div>
+      ) : null}
       
       <button
         onClick={sending ? handleCancelSOS : handleSOS}

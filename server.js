@@ -164,24 +164,73 @@ async function sendPushToGuards(payload = {}) {
       body: payload.body || 'Поступил SOS-вызов',
       icon: '/icons/sos.png',
       sosId: payload.sosId,
-      url: payload.url || '/'
+      url: payload.url || '/',
+      timestamp: Date.now(),
+      requireInteraction: true,
+      vibrate: [200, 100, 200, 100, 200, 100, 400],
+      tag: 'sos-notification',
+      actions: [
+        { action: 'accept', title: 'Принять' },
+        { action: 'decline', title: 'Отклонить' }
+      ],
+      data: {
+        sosId: payload.sosId,
+        fullScreenIntent: true
+      }
     });
     
     // Отправляем уведомления всем охранникам
     const sendPromises = guardSubscriptions.map(sub => {
-      return webPush.sendNotification(sub.subscription, notificationPayload)
+      logWithTime(`Отправка push-уведомления для подписки ${sub._id}`);
+      
+      const pushOptions = {
+        vapidDetails: {
+          subject: 'mailto:admin@1fxpro.vip',
+          publicKey: vapidKeys.publicKey,
+          privateKey: vapidKeys.privateKey
+        },
+        TTL: 60 * 60, // 1 час
+        urgency: 'high',
+        topic: 'sos-alert'
+      };
+      
+      return webPush.sendNotification(sub.subscription, notificationPayload, pushOptions)
+        .then(() => {
+          logWithTime(`Push-уведомление успешно отправлено для ${sub._id}`);
+          return { success: true, id: sub._id };
+        })
         .catch(err => {
-          logWithTime(`Ошибка отправки push-уведомления: ${err.message}`);
+          logWithTime(`Ошибка отправки push-уведомления для ${sub._id}: ${err.message}`);
           
           // Если подписка недействительна, удаляем её
           if (err.statusCode === 404 || err.statusCode === 410) {
-            return PushSubscription.deleteOne({ _id: sub._id });
+            logWithTime(`Удаляем недействительную подписку ${sub._id}`);
+            return PushSubscription.deleteOne({ _id: sub._id })
+              .then(() => ({ success: false, id: sub._id, deleted: true }));
           }
+          
+          return { success: false, id: sub._id, error: err.message };
         });
     });
     
-    await Promise.all(sendPromises);
-    logWithTime('Push-уведомления отправлены охранникам');
+    const results = await Promise.all(sendPromises);
+    
+    // Анализируем результаты
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+    const deleted = results.filter(r => r.deleted).length;
+    
+    logWithTime(`Push-уведомления отправлены: успешно - ${successful}, неудачно - ${failed}, удалено подписок - ${deleted}`);
+    
+    // Если все отправки неудачны, но есть подписки, повторяем через 5 секунд
+    if (successful === 0 && guardSubscriptions.length > 0) {
+      logWithTime('Все отправки неудачны, повторная попытка через 5 секунд');
+      setTimeout(() => {
+        sendPushToGuards(payload).catch(err => {
+          logWithTime(`Ошибка при повторной отправке push-уведомлений: ${err.message}`);
+        });
+      }, 5000);
+    }
   } catch (err) {
     logWithTime(`Ошибка при отправке push-уведомлений: ${err.message}`);
   }

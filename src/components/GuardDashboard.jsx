@@ -139,25 +139,106 @@ const GuardDashboard = () => {
       // Находим вызов по ID или другим данным
       const callId = data.sosId || data.id;
       if (callId) {
+        // Останавливаем сирену перед переходом
+        stopSiren();
+        setIsSirenPlaying(false);
+        
+        // Закрываем оверлей
+        setShowSOSOverlay(false);
+        
+        // Переходим к деталям вызова
         navigate(`/call/${callId}`);
       }
     } else if (action === 'decline-sos') {
       // Находим вызов по ID или другим данным
       const callId = data.sosId || data.id;
       if (callId) {
+        // Останавливаем сирену
+        stopSiren();
+        setIsSirenPlaying(false);
+        
+        // Закрываем оверлей
+        setShowSOSOverlay(false);
+        
+        // Отклоняем вызов
         handleCancelCall(callId);
       }
     } else if (action === 'show-sos-overlay') {
       // Показываем полноэкранный оверлей SOS
       console.log('Показываем полноэкранный оверлей SOS с данными:', data);
-      setCurrentSOSData(data);
+      
+      // Получаем данные о вызове
+      const sosId = data.sosId || null;
+      
+      // Проверяем, есть ли уже этот вызов в активных
+      const existingCall = activeCallsRef.current.find(call => call.id === sosId);
+      
+      if (existingCall) {
+        // Используем существующие данные о вызове
+        setCurrentSOSData(existingCall);
+      } else {
+        // Используем данные из уведомления
+        setCurrentSOSData(data);
+        
+        // Если есть ID вызова, запрашиваем дополнительные данные с сервера
+        if (sosId) {
+          axios.get(`/api/calls/${sosId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+          .then(response => {
+            setCurrentSOSData(prev => ({
+              ...prev,
+              ...response.data
+            }));
+          })
+          .catch(err => {
+            console.error('Ошибка получения данных о вызове:', err);
+          });
+        }
+      }
+      
+      // Показываем оверлей
       setShowSOSOverlay(true);
       
-      // Проигрываем сирену
+      // Проигрываем сирену, если она еще не играет
       if (!isSirenPlaying) {
         playSiren()
           .then(() => setIsSirenPlaying(true))
           .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+      }
+      
+      // Вибрируем на мобильных устройствах
+      if ('vibrate' in navigator) {
+        navigator.vibrate([300, 100, 300, 100, 300]);
+      }
+      
+      // Запрашиваем WakeLock для предотвращения засыпания устройства
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen')
+          .then(wakeLock => {
+            console.log('WakeLock получен');
+            // Сохраняем ссылку на WakeLock для последующего освобождения
+            window.sosWakeLock = wakeLock;
+          })
+          .catch(err => {
+            console.error('Ошибка получения WakeLock:', err);
+          });
+      }
+    } else if (action === 'send-test-notification') {
+      // Тестовое уведомление для проверки работоспособности
+      console.log('Получен запрос на отправку тестового уведомления');
+      
+      // Показываем тестовое уведомление
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const testNotification = new Notification('Тестовое уведомление', {
+          body: 'Система уведомлений работает корректно',
+          icon: '/icons/sos.png'
+        });
+        
+        // Закрываем уведомление через 3 секунды
+        setTimeout(() => {
+          testNotification.close();
+        }, 3000);
       }
     }
   };
@@ -443,18 +524,61 @@ const GuardDashboard = () => {
   };
 
   // Обработчики для полноэкранного оверлея SOS
-  const handleAcceptSOS = (callData) => {
-    const callId = callData.id || callData._id;
-    if (callId) {
-      navigate(`/call/${callId}`);
+  const handleAcceptSOS = () => {
+    // Останавливаем сирену
+    stopSiren();
+    setIsSirenPlaying(false);
+    
+    // Освобождаем WakeLock, если он был получен
+    if (window.sosWakeLock) {
+      window.sosWakeLock.release()
+        .then(() => {
+          console.log('WakeLock освобожден');
+          window.sosWakeLock = null;
+        })
+        .catch(err => console.error('Ошибка освобождения WakeLock:', err));
+    }
+    
+    // Закрываем оверлей
+    setShowSOSOverlay(false);
+    
+    // Переходим к деталям вызова
+    if (currentSOSData && currentSOSData.sosId) {
+      navigate(`/call/${currentSOSData.sosId}`);
     }
   };
   
-  const handleDeclineSOS = (callData) => {
-    const callId = callData.id || callData._id;
-    if (callId) {
-      handleCancelCall(callId);
+  const handleDeclineSOS = () => {
+    // Останавливаем сирену
+    stopSiren();
+    setIsSirenPlaying(false);
+    
+    // Освобождаем WakeLock, если он был получен
+    if (window.sosWakeLock) {
+      window.sosWakeLock.release()
+        .then(() => {
+          console.log('WakeLock освобожден');
+          window.sosWakeLock = null;
+        })
+        .catch(err => console.error('Ошибка освобождения WakeLock:', err));
     }
+    
+    // Закрываем оверлей
+    setShowSOSOverlay(false);
+    
+    // Отклоняем вызов
+    if (currentSOSData && currentSOSData.sosId) {
+      handleCancelCall(currentSOSData.sosId);
+    }
+  };
+
+  const handleCloseSOS = () => {
+    // Останавливаем сирену
+    stopSiren();
+    setIsSirenPlaying(false);
+    
+    // Закрываем оверлей
+    setShowSOSOverlay(false);
   };
 
   // Функция для принудительного обновления истории вызовов
@@ -514,7 +638,7 @@ const GuardDashboard = () => {
         callData={currentSOSData || {}}
         onAccept={handleAcceptSOS}
         onDecline={handleDeclineSOS}
-        onClose={() => setShowSOSOverlay(false)}
+        onClose={handleCloseSOS}
       />
 
       <div className="guard-header" style={{ 

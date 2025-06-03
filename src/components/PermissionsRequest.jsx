@@ -1,38 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 
-// Компонент для запроса разрешений на доступ к камере, микрофону и геолокации
-const PermissionsRequest = () => {
-  const [permissions, setPermissions] = useState({
-    location: false
-  });
+// Компонент для запроса разрешений на доступ к геолокации
+const PermissionsRequest = ({ onPermissionsGranted }) => {
+  const [locationPermission, setLocationPermission] = useState(false);
   const [error, setError] = useState('');
-  const navigate = useNavigate();
 
   // Проверяем, является ли устройство iOS
   const iosCheck = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   useEffect(() => {
     // Проверяем наличие разрешений при загрузке компонента
-    checkPermissions();
-  }, []);
-
-  // Функция для проверки разрешений
-  const checkPermissions = async () => {
-    try {
-      // Проверяем разрешение на геолокацию
-      const locationPermission = await checkLocationPermission();
-      setPermissions(prev => ({ ...prev, location: locationPermission }));
-      
-      // Если все разрешения получены, переходим к авторизации
-      if (locationPermission) {
-        navigate('/login');
+    checkLocationPermission().then(granted => {
+      setLocationPermission(granted);
+      if (granted && onPermissionsGranted) {
+        onPermissionsGranted();
       }
-    } catch (err) {
-      console.error('Ошибка при проверке разрешений:', err);
-      setError('Не удалось проверить разрешения приложения');
-    }
-  };
+    });
+  }, [onPermissionsGranted]);
 
   // Проверка разрешения на геолокацию
   const checkLocationPermission = () => {
@@ -53,14 +37,12 @@ const PermissionsRequest = () => {
   const requestPermissions = async () => {
     try {
       // Запрашиваем геолокацию
-      if (!permissions.location) {
-        const locationGranted = await checkLocationPermission();
-        setPermissions(prev => ({ ...prev, location: locationGranted }));
-      }
+      const granted = await checkLocationPermission();
+      setLocationPermission(granted);
       
-      // Если все разрешения получены, переходим к авторизации
-      if (permissions.location) {
-        navigate('/login');
+      // Если разрешение получено, вызываем callback
+      if (granted && onPermissionsGranted) {
+        onPermissionsGranted();
       }
     } catch (err) {
       console.error('Ошибка при запросе разрешений:', err);
@@ -114,12 +96,12 @@ const PermissionsRequest = () => {
           }}>
             <span>Геолокация</span>
             <span style={{
-              backgroundColor: permissions.location ? '#d4edda' : '#f8d7da',
-              color: permissions.location ? '#155724' : '#721c24',
+              backgroundColor: locationPermission ? '#d4edda' : '#f8d7da',
+              color: locationPermission ? '#155724' : '#721c24',
               padding: '5px 10px',
               borderRadius: '4px'
             }}>
-              {permissions.location ? 'Разрешено' : 'Не разрешено'}
+              {locationPermission ? 'Разрешено' : 'Не разрешено'}
             </span>
           </div>
         </div>
@@ -137,7 +119,7 @@ const PermissionsRequest = () => {
           cursor: 'pointer'
         }}
       >
-        {permissions.location ? 'Продолжить' : 'Запросить разрешения'}
+        {locationPermission ? 'Продолжить' : 'Запросить разрешения'}
       </button>
       
       {iosCheck && (
