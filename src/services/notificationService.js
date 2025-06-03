@@ -1,325 +1,353 @@
 /**
- * Запрашивает разрешение на показ уведомлений
- * @returns {Promise<boolean>} Результат запроса разрешения
+ * Сервис для работы с уведомлениями и push-сообщениями
  */
-export const requestNotificationPermission = async () => {
-  if (!('Notification' in window)) {
-    console.log('Браузер не поддерживает уведомления');
-    return false;
-  }
 
-  if (Notification.permission === 'granted') {
-    return true;
-  }
+import { getPlatform, requestNotificationPermission as requestPermission } from './platformConfig';
 
-  if (Notification.permission !== 'denied') {
-    const permission = await Notification.requestPermission();
-    return permission === 'granted';
-  }
-
-  return false;
-};
-
-// Создаем единый аудио-контекст для всего приложения
+// Аудио-контекст для воспроизведения звуков
 let audioContext = null;
-let audioSource = null;
-let audioBuffer = null;
+let sirenSource = null;
+let sirenBuffer = null;
+let sirenGainNode = null;
 let audioElement = null;
 
 /**
- * Инициализирует аудио-контекст и загружает звук сирены
- * @returns {Promise<boolean>} Результат инициализации
+ * Инициализирует аудио-контекст для воспроизведения звуков
+ * Это необходимо делать после взаимодействия пользователя с страницей
  */
 export const initAudioContext = async () => {
   try {
-    // Создаем аудио-контекст при первом вызове
-    if (!audioContext) {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      audioContext = new AudioContext();
+    // Проверяем, поддерживается ли Web Audio API
+    if (!window.AudioContext && !window.webkitAudioContext) {
+      console.warn('Web Audio API не поддерживается браузером');
+      return false;
     }
     
-    // Если буфер уже загружен, не загружаем повторно
-    if (audioBuffer) {
-      return true;
-    }
+    // Создаем аудио-контекст
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    audioContext = new AudioContextClass();
+    
+    // Создаем узел усиления
+    sirenGainNode = audioContext.createGain();
+    sirenGainNode.gain.value = 1.0;
+    sirenGainNode.connect(audioContext.destination);
     
     // Загружаем звук сирены
     const response = await fetch('/siren.mp3');
     const arrayBuffer = await response.arrayBuffer();
-    audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    sirenBuffer = await audioContext.decodeAudioData(arrayBuffer);
     
+    // Для мобильных устройств также подготавливаем HTML5 Audio
+    audioElement = document.getElementById('preload-siren') || new Audio('/siren.mp3');
+    audioElement.loop = true;
+    
+    console.log('Аудио-контекст инициализирован успешно');
     return true;
   } catch (err) {
-    console.error('Ошибка инициализации аудио:', err);
+    console.error('Ошибка инициализации аудио-контекста:', err);
     return false;
   }
 };
 
 /**
- * Воспроизводит звук сирены в цикле
- * @returns {Promise<boolean>} Результат запуска воспроизведения
+ * Запрашивает разрешение на показ уведомлений
+ */
+export const requestNotificationPermission = async () => {
+  try {
+    const granted = await requestPermission();
+    console.log(`Разрешение на уведомления ${granted ? 'получено' : 'не получено'}`);
+    return granted;
+  } catch (err) {
+    console.error('Ошибка запроса разрешения на уведомления:', err);
+    return false;
+  }
+};
+
+/**
+ * Проигрывает звук сирены
  */
 export const playSiren = async () => {
   try {
-    // Используем HTML5 Audio API для лучшей поддержки мобильных устройств
-    if (!audioElement) {
-      audioElement = new Audio('/siren.mp3');
-      audioElement.loop = true;
-    }
-    
-    // Проверяем, что аудио не воспроизводится в данный момент
-    if (audioElement.paused) {
-      try {
-        // Пробуем воспроизвести звук через HTML5 Audio API
-        await audioElement.play();
-        console.log('Сирена воспроизводится через HTML5 Audio');
-        return true;
-      } catch (htmlAudioErr) {
-        console.warn('Не удалось воспроизвести через HTML5 Audio, пробуем Web Audio API:', htmlAudioErr);
-        
-        // Если HTML5 Audio не сработал, пробуем Web Audio API
-        if (!audioContext) {
-          await initAudioContext();
-        }
-        
-        // Если аудио-контекст в состоянии suspended (например, из-за политики браузера),
-        // пытаемся его возобновить
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
-        
-        // Останавливаем предыдущее воспроизведение, если оно есть
-        if (audioSource) {
-          audioSource.stop();
-          audioSource.disconnect();
-        }
-        
-        // Создаем новый источник звука
-        audioSource = audioContext.createBufferSource();
-        audioSource.buffer = audioBuffer;
-        audioSource.loop = true;
-        audioSource.connect(audioContext.destination);
-        audioSource.start(0);
-        
-        console.log('Сирена воспроизводится через Web Audio API');
-        return true;
+    // Пробуем использовать Web Audio API
+    if (audioContext && sirenBuffer) {
+      // Останавливаем предыдущий звук, если он есть
+      if (sirenSource) {
+        sirenSource.stop();
+        sirenSource = null;
       }
+      
+      // Создаем новый источник звука
+      sirenSource = audioContext.createBufferSource();
+      sirenSource.buffer = sirenBuffer;
+      sirenSource.loop = true;
+      sirenSource.connect(sirenGainNode);
+      
+      // Запускаем воспроизведение
+      sirenSource.start(0);
+      console.log('Сирена воспроизводится через Web Audio API');
+      return true;
     }
     
-    return true;
+    // Если Web Audio API не доступен, используем HTML5 Audio
+    if (audioElement) {
+      // Перезапускаем воспроизведение
+      audioElement.currentTime = 0;
+      
+      // На мобильных устройствах часто требуется пользовательское взаимодействие
+      // для воспроизведения звука, поэтому используем Promise
+      await audioElement.play();
+      console.log('Сирена воспроизводится через HTML5 Audio');
+      return true;
+    }
+    
+    console.warn('Не удалось воспроизвести сирену: аудио-контекст не инициализирован');
+    return false;
   } catch (err) {
     console.error('Ошибка воспроизведения сирены:', err);
+    
+    // Пробуем запустить через service worker
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        action: 'play-siren'
+      });
+      console.log('Отправлен запрос на воспроизведение сирены через service worker');
+    }
+    
     return false;
   }
 };
 
 /**
- * Останавливает воспроизведение сирены
+ * Останавливает звук сирены
  */
 export const stopSiren = () => {
-  // Останавливаем HTML5 Audio
-  if (audioElement) {
-    audioElement.pause();
-    audioElement.currentTime = 0;
-  }
-  
-  // Останавливаем Web Audio API
-  if (audioSource) {
-    try {
-      audioSource.stop();
-      audioSource.disconnect();
-      audioSource = null;
-    } catch (err) {
-      console.error('Ошибка остановки сирены через Web Audio API:', err);
+  try {
+    // Останавливаем Web Audio API
+    if (sirenSource) {
+      sirenSource.stop();
+      sirenSource = null;
+      console.log('Сирена остановлена (Web Audio API)');
     }
+    
+    // Останавливаем HTML5 Audio
+    if (audioElement) {
+      audioElement.pause();
+      audioElement.currentTime = 0;
+      console.log('Сирена остановлена (HTML5 Audio)');
+    }
+    
+    // Отправляем сообщение service worker для остановки сирены
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        action: 'stop-siren'
+      });
+      console.log('Отправлен запрос на остановку сирены через service worker');
+    }
+    
+    return true;
+  } catch (err) {
+    console.error('Ошибка остановки сирены:', err);
+    return false;
   }
 };
 
 /**
- * Показывает нативное уведомление с возможностью обработки клика
- * @param {string} title Заголовок уведомления
- * @param {object} options Опции уведомления
- * @param {Function} onClick Функция-обработчик клика по уведомлению
- * @returns {Notification|null} Объект уведомления или null
- */
-export const showNotification = (title, options = {}, onClick = null) => {
-  if (!('Notification' in window) || Notification.permission !== 'granted') {
-    return null;
-  }
-
-  // Настройки по умолчанию
-  const defaultOptions = {
-    icon: '/logo192.png',
-    vibrate: [200, 100, 200, 100, 200],
-    requireInteraction: true, // Уведомление не исчезает автоматически
-    silent: true // Отключаем стандартный звук уведомления, т.к. используем свой
-  };
-
-  // Для мобильных устройств добавляем дополнительные опции
-  if ('serviceWorker' in navigator && 'PushManager' in window) {
-    // Эти опции будут использоваться в service worker для создания уведомления
-    // с полноэкранным режимом на Android
-    defaultOptions.data = {
-      fullScreenIntent: true,
-      soundName: 'siren.mp3',
-      actions: [
-        {
-          action: 'accept',
-          title: 'Принять'
-        },
-        {
-          action: 'decline',
-          title: 'Отклонить'
-        }
-      ]
-    };
-  }
-
-  const notification = new Notification(title, { ...defaultOptions, ...options });
-  
-  if (onClick && typeof onClick === 'function') {
-    notification.onclick = () => {
-      window.focus();
-      onClick();
-    };
-  }
-
-  // Воспроизводим сирену при показе уведомления
-  playSiren().catch(console.error);
-
-  return notification;
-};
-
-/**
- * Показывает оверлей-уведомление о входящем вызове
- * @param {object} data Данные о вызове
- * @param {Function} onAccept Функция при принятии вызова
- * @param {Function} onDecline Функция при отклонении вызова
+ * Показывает оверлей входящего вызова
+ * @param {Object} data Данные о вызове
+ * @param {Function} onAccept Функция, вызываемая при принятии вызова
+ * @param {Function} onDecline Функция, вызываемая при отклонении вызова
+ * @returns {Function} Функция для закрытия оверлея
  */
 export const showIncomingCallOverlay = (data, onAccept, onDecline) => {
-  const displayName = data.userName || data.phone;
-  
   // Создаем элемент оверлея
   const overlay = document.createElement('div');
-  overlay.id = 'incoming-call-overlay';
-  overlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.9);
-    z-index: 9999;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-family: Arial, sans-serif;
-  `;
-
-  // Создаем содержимое оверлея с адаптивными стилями
-  overlay.innerHTML = `
-    <div style="text-align: center; padding: 20px; width: 100%; max-width: 500px;">
-      <div style="font-size: clamp(18px, 5vw, 24px); margin-bottom: 10px;">
-        <svg xmlns="http://www.w3.org/2000/svg" width="clamp(32px, 10vw, 48px)" height="clamp(32px, 10vw, 48px)" fill="currentColor" viewBox="0 0 16 16" style="animation: pulse 1.5s infinite; margin-bottom: 15px;">
-          <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
-          <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
-        </svg>
-        <div style="font-size: clamp(24px, 8vw, 36px); font-weight: bold; margin-bottom: 10px; color: #ff3b30;">SOS ВЫЗОВ!</div>
-      </div>
-      <div style="font-size: clamp(18px, 6vw, 24px); margin-bottom: 30px;">
-        <div style="font-weight: bold;">${displayName}</div>
-        <div style="font-size: clamp(14px, 4vw, 18px); opacity: 0.8;">${data.phone}</div>
-      </div>
-      <div style="display: flex; justify-content: center; gap: clamp(10px, 4vw, 20px); flex-wrap: wrap;">
-        <button id="accept-call" style="
-          padding: clamp(10px, 3vw, 15px) clamp(20px, 6vw, 30px);
-          background-color: #28a745;
-          color: white;
-          border: none;
-          border-radius: 50px;
-          font-size: clamp(14px, 5vw, 18px);
-          font-weight: bold;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          min-width: 160px;
-          justify-content: center;
-        ">
-          <svg xmlns="http://www.w3.org/2000/svg" width="clamp(16px, 5vw, 24px)" height="clamp(16px, 5vw, 24px)" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 10px;">
-            <path d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5z"/>
-          </svg>
-          Принять
-        </button>
-        <button id="decline-call" style="
-          padding: clamp(10px, 3vw, 15px) clamp(20px, 6vw, 30px);
-          background-color: #dc3545;
-          color: white;
-          border: none;
-          border-radius: 50px;
-          font-size: clamp(14px, 5vw, 18px);
-          font-weight: bold;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          min-width: 160px;
-          justify-content: center;
-        ">
-          <svg xmlns="http://www.w3.org/2000/svg" width="clamp(16px, 5vw, 24px)" height="clamp(16px, 5vw, 24px)" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 10px;">
-            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
-          </svg>
-          Отклонить
-        </button>
-      </div>
-    </div>
-    <style>
-      @keyframes pulse {
-        0% { transform: scale(1); opacity: 1; }
-        50% { transform: scale(1.2); opacity: 0.8; }
-        100% { transform: scale(1); opacity: 1; }
-      }
-      
-      @media (max-width: 480px) {
-        #incoming-call-overlay > div {
-          padding: 10px;
-        }
-        #accept-call, #decline-call {
-          margin-bottom: 10px;
-        }
-      }
-    </style>
-  `;
-
-  // Добавляем оверлей в DOM
-  document.body.appendChild(overlay);
-
-  // Запускаем сирену при показе оверлея
-  playSiren().catch(console.error);
-
+  overlay.style.position = 'fixed';
+  overlay.style.top = '0';
+  overlay.style.left = '0';
+  overlay.style.width = '100%';
+  overlay.style.height = '100%';
+  overlay.style.backgroundColor = 'rgba(220, 53, 69, 0.95)';
+  overlay.style.zIndex = '9999';
+  overlay.style.display = 'flex';
+  overlay.style.flexDirection = 'column';
+  overlay.style.justifyContent = 'center';
+  overlay.style.alignItems = 'center';
+  overlay.style.color = 'white';
+  overlay.style.fontFamily = 'Arial, sans-serif';
+  overlay.style.padding = '20px';
+  overlay.style.boxSizing = 'border-box';
+  
+  // Создаем содержимое оверлея
+  const title = document.createElement('h2');
+  title.textContent = 'SOS Вызов!';
+  title.style.fontSize = '28px';
+  title.style.marginBottom = '10px';
+  title.style.textAlign = 'center';
+  
+  const message = document.createElement('p');
+  message.textContent = `От: ${data.userName || data.phone || 'Неизвестный пользователь'}`;
+  message.style.fontSize = '20px';
+  message.style.marginBottom = '30px';
+  message.style.textAlign = 'center';
+  
+  // Создаем контейнер для кнопок
+  const buttonContainer = document.createElement('div');
+  buttonContainer.style.display = 'flex';
+  buttonContainer.style.justifyContent = 'center';
+  buttonContainer.style.gap = '20px';
+  
+  // Кнопка принятия вызова
+  const acceptButton = document.createElement('button');
+  acceptButton.textContent = 'Принять';
+  acceptButton.style.padding = '15px 30px';
+  acceptButton.style.fontSize = '18px';
+  acceptButton.style.backgroundColor = '#28a745';
+  acceptButton.style.color = 'white';
+  acceptButton.style.border = 'none';
+  acceptButton.style.borderRadius = '5px';
+  acceptButton.style.cursor = 'pointer';
+  
+  // Кнопка отклонения вызова
+  const declineButton = document.createElement('button');
+  declineButton.textContent = 'Отклонить';
+  declineButton.style.padding = '15px 30px';
+  declineButton.style.fontSize = '18px';
+  declineButton.style.backgroundColor = '#6c757d';
+  declineButton.style.color = 'white';
+  declineButton.style.border = 'none';
+  declineButton.style.borderRadius = '5px';
+  declineButton.style.cursor = 'pointer';
+  
   // Добавляем обработчики событий
-  document.getElementById('accept-call').addEventListener('click', () => {
-    stopSiren();
+  acceptButton.addEventListener('click', () => {
     document.body.removeChild(overlay);
-    if (onAccept && typeof onAccept === 'function') {
-      onAccept();
+    if (typeof onAccept === 'function') {
+      onAccept(data);
     }
   });
-
-  document.getElementById('decline-call').addEventListener('click', () => {
-    stopSiren();
+  
+  declineButton.addEventListener('click', () => {
     document.body.removeChild(overlay);
-    if (onDecline && typeof onDecline === 'function') {
-      onDecline();
+    if (typeof onDecline === 'function') {
+      onDecline(data);
     }
   });
-
+  
+  // Собираем оверлей
+  buttonContainer.appendChild(acceptButton);
+  buttonContainer.appendChild(declineButton);
+  
+  overlay.appendChild(title);
+  overlay.appendChild(message);
+  overlay.appendChild(buttonContainer);
+  
+  // Добавляем оверлей на страницу
+  document.body.appendChild(overlay);
+  
+  // Запускаем вибрацию на мобильных устройствах
+  if ('vibrate' in navigator) {
+    try {
+      navigator.vibrate([300, 100, 300, 100, 300]);
+    } catch (err) {
+      console.error('Ошибка активации вибрации:', err);
+    }
+  }
+  
   // Возвращаем функцию для закрытия оверлея
   return () => {
     if (document.body.contains(overlay)) {
-      stopSiren();
       document.body.removeChild(overlay);
     }
   };
+};
+
+/**
+ * Регистрирует push-подписку для текущего пользователя
+ * @param {string} role Роль пользователя ('user' или 'guard')
+ * @returns {Promise<Object|null>} Объект с подпиской или null в случае ошибки
+ */
+export const registerPushSubscription = async (role) => {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.warn('Push-уведомления не поддерживаются браузером');
+    return null;
+  }
+  
+  try {
+    // Запрашиваем разрешение на уведомления
+    const permissionGranted = await requestNotificationPermission();
+    if (!permissionGranted) {
+      console.warn('Не получено разрешение на уведомления');
+      return null;
+    }
+    
+    // Получаем регистрацию service worker
+    const registration = await navigator.serviceWorker.ready;
+    
+    // Проверяем наличие существующей подписки
+    let subscription = await registration.pushManager.getSubscription();
+    
+    // Если подписка существует, возвращаем её
+    if (subscription) {
+      console.log('Найдена существующая push-подписка');
+      return { subscription, isNew: false };
+    }
+    
+    // Получаем VAPID ключ из мета-тега
+    const vapidMeta = document.querySelector('meta[name="vapid-key"]');
+    if (!vapidMeta) {
+      console.error('Не найден мета-тег с VAPID ключом');
+      return null;
+    }
+    
+    const vapidKey = vapidMeta.content;
+    if (!vapidKey) {
+      console.error('VAPID ключ пустой');
+      return null;
+    }
+    
+    // Конвертируем VAPID ключ в Uint8Array
+    const applicationServerKey = urlBase64ToUint8Array(vapidKey);
+    
+    // Создаем новую подписку
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: applicationServerKey
+    });
+    
+    console.log('Создана новая push-подписка');
+    return { subscription, isNew: true };
+  } catch (err) {
+    console.error('Ошибка регистрации push-подписки:', err);
+    return null;
+  }
+};
+
+/**
+ * Конвертирует base64 строку в Uint8Array
+ * @param {string} base64String VAPID ключ в формате base64
+ * @returns {Uint8Array} Массив байтов для использования в applicationServerKey
+ */
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  
+  return outputArray;
+}
+
+export default {
+  initAudioContext,
+  requestNotificationPermission,
+  playSiren,
+  stopSiren,
+  showIncomingCallOverlay,
+  registerPushSubscription
 }; 

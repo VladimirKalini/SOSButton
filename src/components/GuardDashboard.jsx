@@ -46,6 +46,14 @@ const GuardDashboard = () => {
     // Инициализируем аудио-контекст для лучшей работы на мобильных устройствах
     initAudioContext().catch(err => console.error('Ошибка инициализации аудио:', err));
     
+    // Определяем платформу
+    const userAgent = navigator.userAgent || '';
+    const isMobile = /android|iphone|ipad|ipod/i.test(userAgent.toLowerCase());
+    const platform = /android/i.test(userAgent) ? 'android' : 
+                    (/iPad|iPhone|iPod/.test(userAgent) ? 'ios' : 'web');
+    
+    console.log(`Определена платформа: ${platform}, мобильное устройство: ${isMobile}`);
+    
     // Регистрируем роль охранника для push-уведомлений
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.ready
@@ -64,6 +72,46 @@ const GuardDashboard = () => {
                     return axios.post('/api/save-subscription', {
                       subscription,
                       role: 'guard'
+                    })
+                    .then(response => {
+                      console.log('Push-подписка для охранника обновлена:', response.data);
+                      return { subscription, isNew: false };
+                    })
+                    .catch(err => {
+                      console.error('Ошибка обновления подписки:', err);
+                      
+                      // На мобильных устройствах пробуем пересоздать подписку при ошибке
+                      if (isMobile) {
+                        console.log('Пробуем пересоздать подписку для мобильного устройства');
+                        return subscription.unsubscribe()
+                          .then(() => {
+                            console.log('Старая подписка отменена');
+                            
+                            // Создаем новую подписку
+                            const vapidPublicKey = 'BLBz4TFiSfAM9qfyX3GJQrHXqUAzTVJ6UQzADDw_wXJYdqi_Z3X6eRLTZuNnTwAZrUU7hjHyRwrNfwOxGwODnxA';
+                            return registration.pushManager.subscribe({
+                              userVisibleOnly: true,
+                              applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+                            })
+                            .then(newSubscription => {
+                              // Отправляем новую подписку на сервер
+                              return axios.post('/api/save-subscription', {
+                                subscription: newSubscription,
+                                role: 'guard'
+                              })
+                              .then(response => {
+                                console.log('Новая push-подписка для охранника сохранена:', response.data);
+                                return { subscription: newSubscription, isNew: true };
+                              });
+                            });
+                          })
+                          .catch(recreateErr => {
+                            console.error('Ошибка пересоздания подписки:', recreateErr);
+                            return { subscription, isNew: false, error: recreateErr };
+                          });
+                      }
+                      
+                      return { subscription, isNew: false, error: err };
                     });
                   } else {
                     // Получаем VAPID ключ из конфигурации
@@ -79,12 +127,67 @@ const GuardDashboard = () => {
                       return axios.post('/api/save-subscription', {
                         subscription: newSubscription,
                         role: 'guard'
+                      })
+                      .then(response => {
+                        console.log('Новая push-подписка для охранника сохранена:', response.data);
+                        return { subscription: newSubscription, isNew: true };
+                      })
+                      .catch(err => {
+                        console.error('Ошибка сохранения подписки на сервере:', err);
+                        return { subscription: newSubscription, isNew: true, error: err };
                       });
+                    })
+                    .catch(err => {
+                      console.error('Ошибка создания push-подписки:', err);
+                      return { subscription: null, isNew: false, error: err };
                     });
                   }
                 })
-                .then(() => {
-                  console.log('Push-подписка для охранника сохранена');
+                .then(({ subscription, isNew }) => {
+                  // Если это мобильное устройство, отправляем тестовое уведомление
+                  if (isMobile) {
+                    console.log('Отправляем тестовое уведомление для мобильной платформы:', platform);
+                    
+                    // Проверяем, активен ли service worker
+                    if (navigator.serviceWorker.controller) {
+                      // Отправляем сообщение service worker для тестового уведомления
+                      navigator.serviceWorker.controller.postMessage({
+                        action: 'send-test-notification',
+                        platform: platform
+                      });
+                    } else {
+                      console.warn('Service Worker не активен, невозможно отправить тестовое уведомление');
+                    }
+                    
+                    // Для iOS дополнительно запрашиваем разрешение на уведомления через нативный API
+                    if (platform === 'ios' && 'Notification' in window) {
+                      try {
+                        const testNotification = new Notification('Тестовое уведомление', {
+                          body: 'Проверка работы уведомлений на iOS',
+                          icon: '/icons/sos.svg',
+                          silent: false,
+                          vibrate: [100, 50, 100]
+                        });
+                        
+                        // Закрываем тестовое уведомление через 3 секунды
+                        setTimeout(() => {
+                          if (testNotification) testNotification.close();
+                        }, 3000);
+                      } catch (notificationErr) {
+                        console.error('Ошибка создания тестового уведомления:', notificationErr);
+                      }
+                    }
+                    
+                    // Проверяем поддержку вибрации
+                    if ('vibrate' in navigator) {
+                      try {
+                        navigator.vibrate([100, 50, 100]);
+                        console.log('Вибрация активирована');
+                      } catch (vibrateErr) {
+                        console.error('Ошибка активации вибрации:', vibrateErr);
+                      }
+                    }
+                  }
                 })
                 .catch(err => {
                   console.error('Ошибка при подписке на push-уведомления:', err);
@@ -168,10 +271,12 @@ const GuardDashboard = () => {
       console.log('Показываем полноэкранный оверлей SOS с данными:', data);
       
       // Получаем данные о вызове
-      const sosId = data.sosId || null;
+      const sosId = data.sosId || data.id || null;
       
       // Проверяем, есть ли уже этот вызов в активных
-      const existingCall = activeCallsRef.current.find(call => call.id === sosId);
+      const existingCall = activeCallsRef.current.find(call => 
+        call.id === sosId || call._id === sosId || call.sosId === sosId
+      );
       
       if (existingCall) {
         // Используем существующие данные о вызове
@@ -186,10 +291,12 @@ const GuardDashboard = () => {
             headers: { Authorization: `Bearer ${token}` }
           })
           .then(response => {
-            setCurrentSOSData(prev => ({
-              ...prev,
-              ...response.data
-            }));
+            if (response.data) {
+              setCurrentSOSData(prev => ({
+                ...prev,
+                ...response.data
+              }));
+            }
           })
           .catch(err => {
             console.error('Ошибка получения данных о вызове:', err);
@@ -209,7 +316,11 @@ const GuardDashboard = () => {
       
       // Вибрируем на мобильных устройствах
       if ('vibrate' in navigator) {
-        navigator.vibrate([300, 100, 300, 100, 300]);
+        try {
+          navigator.vibrate([300, 100, 300, 100, 300]);
+        } catch (err) {
+          console.error('Ошибка активации вибрации:', err);
+        }
       }
       
       // Запрашиваем WakeLock для предотвращения засыпания устройства
@@ -224,21 +335,53 @@ const GuardDashboard = () => {
             console.error('Ошибка получения WakeLock:', err);
           });
       }
+    } else if (action === 'notification-clicked') {
+      // Обработка клика по уведомлению
+      console.log('Получено событие клика по уведомлению:', data);
+      
+      // Если есть ID вызова, показываем оверлей или переходим к деталям
+      if (data && data.sosId) {
+        // Находим вызов в списке активных
+        const existingCall = activeCallsRef.current.find(call => 
+          call.id === data.sosId || call._id === data.sosId || call.sosId === data.sosId
+        );
+        
+        if (existingCall) {
+          // Показываем оверлей с данными о вызове
+          setCurrentSOSData(existingCall);
+          setShowSOSOverlay(true);
+          
+          // Проигрываем сирену
+          if (!isSirenPlaying) {
+            playSiren()
+              .then(() => setIsSirenPlaying(true))
+              .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+          }
+        }
+      }
+    } else if (action === 'push-support-result') {
+      // Получаем результат проверки поддержки push-уведомлений
+      console.log('Результат проверки поддержки push-уведомлений:', data);
     } else if (action === 'send-test-notification') {
       // Тестовое уведомление для проверки работоспособности
       console.log('Получен запрос на отправку тестового уведомления');
       
       // Показываем тестовое уведомление
       if ('Notification' in window && Notification.permission === 'granted') {
-        const testNotification = new Notification('Тестовое уведомление', {
-          body: 'Система уведомлений работает корректно',
-          icon: '/icons/sos.png'
-        });
-        
-        // Закрываем уведомление через 3 секунды
-        setTimeout(() => {
-          testNotification.close();
-        }, 3000);
+        try {
+          const testNotification = new Notification('Тестовое уведомление', {
+            body: 'Система уведомлений работает корректно',
+            icon: '/icons/sos.png',
+            vibrate: [100, 50, 100]
+          });
+          
+          // Закрываем уведомление через 3 секунды
+          setTimeout(() => {
+            testNotification.close();
+          }, 3000);
+        } catch (err) {
+          console.error('Ошибка создания тестового уведомления:', err);
+        }
       }
     }
   };
@@ -283,7 +426,10 @@ const GuardDashboard = () => {
       // Добавляем вызов в список активных
       setActiveCalls(prev => {
         // Проверяем, нет ли уже такого вызова (по ID)
-        const exists = prev.some(call => call.id === data.id || call._id === data.id);
+        const callId = data.id || data._id || data.sosId;
+        const exists = prev.some(call => 
+          call.id === callId || call._id === callId || call.sosId === callId
+        );
         if (!exists) {
           return [data, ...prev];
         }
@@ -304,7 +450,7 @@ const GuardDashboard = () => {
         try {
           const notification = new Notification('SOS Вызов!', {
             body: `От: ${data.userName || data.phone}`,
-            icon: '/logo192.png',
+            icon: '/icons/sos.svg',
             vibrate: [200, 100, 200, 100, 200],
             requireInteraction: true
           });
@@ -323,7 +469,11 @@ const GuardDashboard = () => {
     // Обработка отмены SOS вызова
     socketRef.current.on('sos-canceled', ({ id }) => {
       console.log('SOS вызов отменен:', id);
-      setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
+      
+      // Удаляем вызов из списка активных
+      setActiveCalls(prev => prev.filter(call => 
+        call.id !== id && call._id !== id && call.sosId !== id
+      ));
       
       // Если это был последний активный вызов, останавливаем сирену
       if (activeCallsRef.current.length <= 1) {
@@ -332,9 +482,11 @@ const GuardDashboard = () => {
       }
       
       // Закрываем оверлей, если он открыт и относится к отмененному вызову
-      if (showSOSOverlay && currentSOSData && 
-          (currentSOSData.id === id || currentSOSData._id === id)) {
-        setShowSOSOverlay(false);
+      if (showSOSOverlay && currentSOSData) {
+        const currentId = currentSOSData.id || currentSOSData._id || currentSOSData.sosId;
+        if (currentId === id) {
+          setShowSOSOverlay(false);
+        }
       }
       
       // Показываем уведомление об отмене вызова
@@ -481,7 +633,9 @@ const GuardDashboard = () => {
       });
       
       // Обновляем список активных вызовов
-      setActiveCalls(prev => prev.filter(call => call.id !== id && call._id !== id));
+      setActiveCalls(prev => prev.filter(call => 
+        call.id !== id && call._id !== id && call.sosId !== id
+      ));
       
       // Останавливаем сирену, если это был единственный активный вызов
       if (activeCallsRef.current.length <= 1) {
@@ -490,9 +644,11 @@ const GuardDashboard = () => {
       }
       
       // Закрываем оверлей, если он относится к отмененному вызову
-      if (showSOSOverlay && currentSOSData && 
-          (currentSOSData.id === id || currentSOSData._id === id)) {
-        setShowSOSOverlay(false);
+      if (showSOSOverlay && currentSOSData) {
+        const currentId = currentSOSData.id || currentSOSData._id || currentSOSData.sosId;
+        if (currentId === id) {
+          setShowSOSOverlay(false);
+        }
       }
       
       // Показываем уведомление об успешной отмене
@@ -543,8 +699,11 @@ const GuardDashboard = () => {
     setShowSOSOverlay(false);
     
     // Переходим к деталям вызова
-    if (currentSOSData && currentSOSData.sosId) {
-      navigate(`/call/${currentSOSData.sosId}`);
+    if (currentSOSData) {
+      const callId = currentSOSData.sosId || currentSOSData.id || currentSOSData._id;
+      if (callId) {
+        navigate(`/call/${callId}`);
+      }
     }
   };
   
@@ -567,8 +726,11 @@ const GuardDashboard = () => {
     setShowSOSOverlay(false);
     
     // Отклоняем вызов
-    if (currentSOSData && currentSOSData.sosId) {
-      handleCancelCall(currentSOSData.sosId);
+    if (currentSOSData) {
+      const callId = currentSOSData.sosId || currentSOSData.id || currentSOSData._id;
+      if (callId) {
+        handleCancelCall(callId);
+      }
     }
   };
 
@@ -633,13 +795,14 @@ const GuardDashboard = () => {
       minHeight: '100vh'
     }}>
       {/* Полноэкранный оверлей SOS */}
-      <SOSConfirmationOverlay 
-        show={showSOSOverlay}
-        callData={currentSOSData || {}}
-        onAccept={handleAcceptSOS}
-        onDecline={handleDeclineSOS}
-        onClose={handleCloseSOS}
-      />
+      {showSOSOverlay && currentSOSData && (
+        <SOSConfirmationOverlay 
+          data={currentSOSData}
+          onAccept={handleAcceptSOS}
+          onDecline={handleDeclineSOS}
+          onClose={handleCloseSOS}
+        />
+      )}
 
       <div className="guard-header" style={{ 
         display: 'flex', 

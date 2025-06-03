@@ -57,10 +57,24 @@ mongoose
 const pushSubscriptionSchema = new mongoose.Schema({
   subscription: Object,
   role: { type: String, enum: ['user', 'guard'], default: 'user' },
+  userAgent: { type: String, default: '' },
+  platform: { type: String, enum: ['web', 'android', 'ios', 'unknown'], default: 'unknown' },
+  lastUpdated: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
 });
 
 const PushSubscription = mongoose.model('PushSubscription', pushSubscriptionSchema);
+
+// Создаем схему и модель для FCM токенов
+const fcmTokenSchema = new mongoose.Schema({
+  token: { type: String, required: true, unique: true },
+  role: { type: String, enum: ['user', 'guard'], default: 'user' },
+  platform: { type: String, enum: ['android', 'ios', 'web', 'unknown'], default: 'unknown' },
+  lastUpdated: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const FCMToken = mongoose.model('FCMToken', fcmTokenSchema);
 
 // Создание Express приложения и HTTP сервера
 const app = express();
@@ -118,6 +132,21 @@ app.post('/api/save-subscription', async (req, res) => {
       return res.status(400).json({ error: 'Некорректные данные подписки' });
     }
     
+    // Получаем User-Agent из заголовков запроса
+    const userAgent = req.headers['user-agent'] || '';
+    
+    // Определяем платформу на основе User-Agent
+    let platform = 'unknown';
+    if (/android/i.test(userAgent)) {
+      platform = 'android';
+    } else if (/iPad|iPhone|iPod/.test(userAgent) && !req.headers['x-msstream']) {
+      platform = 'ios';
+    } else {
+      platform = 'web';
+    }
+    
+    logWithTime(`Сохранение подписки для ${role} на платформе ${platform}`);
+    
     // Проверяем, существует ли уже такая подписка
     const existingSubscription = await PushSubscription.findOne({
       'subscription.endpoint': subscription.endpoint
@@ -127,21 +156,78 @@ app.post('/api/save-subscription', async (req, res) => {
       // Обновляем существующую подписку
       existingSubscription.subscription = subscription;
       existingSubscription.role = role || existingSubscription.role;
+      existingSubscription.userAgent = userAgent;
+      existingSubscription.platform = platform;
+      existingSubscription.lastUpdated = new Date();
       await existingSubscription.save();
-      logWithTime(`Обновлена push-подписка для ${role}`);
-      return res.status(200).json({ message: 'Подписка обновлена' });
+      logWithTime(`Обновлена push-подписка для ${role} на платформе ${platform}`);
+      return res.status(200).json({ message: 'Подписка обновлена', platform });
     } else {
       // Создаем новую подписку
       const newSubscription = new PushSubscription({
         subscription,
-        role: role || 'user'
+        role: role || 'user',
+        userAgent,
+        platform
       });
       await newSubscription.save();
-      logWithTime(`Создана новая push-подписка для ${role}`);
-      return res.status(201).json({ message: 'Подписка создана' });
+      logWithTime(`Создана новая push-подписка для ${role} на платформе ${platform}`);
+      return res.status(201).json({ message: 'Подписка создана', platform });
     }
   } catch (err) {
     logWithTime(`Ошибка сохранения push-подписки: ${err.message}`);
+    return res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Маршрут для сохранения FCM токена
+app.post('/api/save-fcm-token', async (req, res) => {
+  try {
+    const { token, role } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ error: 'Отсутствует токен' });
+    }
+    
+    // Получаем User-Agent из заголовков запроса
+    const userAgent = req.headers['user-agent'] || '';
+    
+    // Определяем платформу на основе User-Agent
+    let platform = 'unknown';
+    if (/android/i.test(userAgent)) {
+      platform = 'android';
+    } else if (/iPad|iPhone|iPod/.test(userAgent) && !req.headers['x-msstream']) {
+      platform = 'ios';
+    } else {
+      platform = 'web';
+    }
+    
+    logWithTime(`Сохранение FCM токена для ${role} на платформе ${platform}`);
+    
+    // Проверяем, существует ли уже такой токен
+    const existingToken = await FCMToken.findOne({ token });
+    
+    if (existingToken) {
+      // Обновляем существующий токен
+      existingToken.role = role || existingToken.role;
+      existingToken.platform = platform;
+      existingToken.lastUpdated = new Date();
+      await existingToken.save();
+      logWithTime(`Обновлен FCM токен для ${role} на платформе ${platform}`);
+      return res.status(200).json({ message: 'FCM токен обновлен', platform });
+    } else {
+      // Создаем новый токен
+      const newToken = new FCMToken({
+        token,
+        role: role || 'user',
+        platform
+      });
+      await newToken.save();
+      logWithTime(`Создан новый FCM токен для ${role} на платформе ${platform}`);
+      return res.status(201).json({ message: 'FCM токен сохранен', platform });
+    }
+  } catch (err) {
+    logWithTime(`Ошибка сохранения FCM токена: ${err.message}`);
     return res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -153,16 +239,18 @@ async function sendPushToGuards(payload = {}) {
     const guardSubscriptions = await PushSubscription.find({ role: 'guard' });
     logWithTime(`Найдено ${guardSubscriptions.length} подписок охранников для отправки push`);
     
-    if (guardSubscriptions.length === 0) {
-      logWithTime('Нет подписок охранников для отправки push-уведомлений');
+    const totalEndpoints = guardSubscriptions.length;
+    
+    if (totalEndpoints === 0) {
+      logWithTime('Нет подписок охранников для отправки уведомлений');
       return;
     }
     
-    // Формируем данные уведомления
+    // Формируем данные уведомления для Web Push
     const notificationPayload = JSON.stringify({
       title: payload.title || 'Внимание! SOS',
       body: payload.body || 'Поступил SOS-вызов',
-      icon: '/icons/sos.png',
+      icon: '/icons/sos.svg',
       sosId: payload.sosId,
       url: payload.url || '/',
       timestamp: Date.now(),
@@ -175,64 +263,194 @@ async function sendPushToGuards(payload = {}) {
       ],
       data: {
         sosId: payload.sosId,
-        fullScreenIntent: true
+        fullScreenIntent: true,
+        timestamp: Date.now(),
+        priority: 'high',
+        contentAvailable: 1,
+        mutableContent: 1,
+        categoryId: 'sos',
+        type: 'sos'
       }
     });
     
-    // Отправляем уведомления всем охранникам
-    const sendPromises = guardSubscriptions.map(sub => {
-      logWithTime(`Отправка push-уведомления для подписки ${sub._id}`);
+    // Массив для хранения результатов отправки
+    const results = [];
+    
+    // Отправляем через Web Push API
+    if (guardSubscriptions.length > 0) {
+      // Группируем подписки по платформам
+      const androidSubscriptions = guardSubscriptions.filter(sub => sub.platform === 'android');
+      const iosSubscriptions = guardSubscriptions.filter(sub => sub.platform === 'ios');
+      const webSubscriptions = guardSubscriptions.filter(sub => 
+        sub.platform === 'web' || sub.platform === 'unknown'
+      );
       
-      const pushOptions = {
-        vapidDetails: {
-          subject: 'mailto:admin@1fxpro.vip',
-          publicKey: vapidKeys.publicKey,
-          privateKey: vapidKeys.privateKey
-        },
-        TTL: 60 * 60, // 1 час
-        urgency: 'high',
-        topic: 'sos-alert'
-      };
+      logWithTime(`Распределение подписок по платформам: Android - ${androidSubscriptions.length}, iOS - ${iosSubscriptions.length}, Web - ${webSubscriptions.length}`);
       
-      return webPush.sendNotification(sub.subscription, notificationPayload, pushOptions)
-        .then(() => {
-          logWithTime(`Push-уведомление успешно отправлено для ${sub._id}`);
-          return { success: true, id: sub._id };
-        })
-        .catch(err => {
-          logWithTime(`Ошибка отправки push-уведомления для ${sub._id}: ${err.message}`);
+      // Функция для отправки уведомлений на группу подписок
+      const sendToSubscriptions = async (subscriptions, platformName) => {
+        if (subscriptions.length === 0) return [];
+        
+        logWithTime(`Отправка уведомлений для ${subscriptions.length} подписок на платформе ${platformName}`);
+        
+        const sendPromises = subscriptions.map(sub => {
+          // Настраиваем опции отправки
+          const pushOptions = {
+            vapidDetails: {
+              subject: 'mailto:admin@1fxpro.vip',
+              publicKey: vapidKeys.publicKey,
+              privateKey: vapidKeys.privateKey
+            },
+            TTL: 60 * 60, // 1 час
+            urgency: 'high',
+            topic: 'sos-alert',
+            headers: {
+              'Urgency': 'high',
+              'Priority': 'high'
+            }
+          };
           
-          // Если подписка недействительна, удаляем её
-          if (err.statusCode === 404 || err.statusCode === 410) {
-            logWithTime(`Удаляем недействительную подписку ${sub._id}`);
-            return PushSubscription.deleteOne({ _id: sub._id })
-              .then(() => ({ success: false, id: sub._id, deleted: true }));
+          // Для iOS добавляем дополнительные заголовки
+          if (platformName === 'ios') {
+            pushOptions.headers['content-available'] = '1';
+            pushOptions.headers['mutable-content'] = '1';
+            pushOptions.headers['X-Notification-Category'] = 'sos';
           }
           
-          return { success: false, id: sub._id, error: err.message };
+          // Для Android добавляем заголовки для полноэкранных уведомлений
+          if (platformName === 'android') {
+            pushOptions.headers['X-Notification-Full-Screen'] = 'true';
+            pushOptions.headers['X-Notification-Priority'] = 'high';
+          }
+          
+          return webPush.sendNotification(sub.subscription, notificationPayload, pushOptions)
+            .then(() => {
+              logWithTime(`Push-уведомление успешно отправлено для ${sub._id} (${platformName})`);
+              return { success: true, id: sub._id, platform: platformName };
+            })
+            .catch(err => {
+              logWithTime(`Ошибка отправки push-уведомления для ${sub._id} (${platformName}): ${err.message}`);
+              
+              // Если подписка недействительна, удаляем её
+              if (err.statusCode === 404 || err.statusCode === 410) {
+                logWithTime(`Удаляем недействительную подписку ${sub._id}`);
+                return PushSubscription.deleteOne({ _id: sub._id })
+                  .then(() => ({ success: false, id: sub._id, deleted: true, platform: platformName }));
+              }
+              
+              return { success: false, id: sub._id, error: err.message, platform: platformName };
+            });
         });
-    });
+        
+        return Promise.all(sendPromises);
+      };
+      
+      // Отправляем уведомления на разные платформы
+      const androidResults = await sendToSubscriptions(androidSubscriptions, 'android');
+      const iosResults = await sendToSubscriptions(iosSubscriptions, 'ios');
+      const webResults = await sendToSubscriptions(webSubscriptions, 'web');
+      
+      // Объединяем результаты
+      results.push(...androidResults, ...iosResults, ...webResults);
+    }
     
-    const results = await Promise.all(sendPromises);
-    
-    // Анализируем результаты
+    // Анализируем общие результаты
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
     const deleted = results.filter(r => r.deleted).length;
     
-    logWithTime(`Push-уведомления отправлены: успешно - ${successful}, неудачно - ${failed}, удалено подписок - ${deleted}`);
+    logWithTime(`Уведомления отправлены: успешно - ${successful}, неудачно - ${failed}, удалено подписок - ${deleted}`);
     
     // Если все отправки неудачны, но есть подписки, повторяем через 5 секунд
-    if (successful === 0 && guardSubscriptions.length > 0) {
+    if (successful === 0 && totalEndpoints > 0) {
       logWithTime('Все отправки неудачны, повторная попытка через 5 секунд');
       setTimeout(() => {
         sendPushToGuards(payload).catch(err => {
-          logWithTime(`Ошибка при повторной отправке push-уведомлений: ${err.message}`);
+          logWithTime(`Ошибка при повторной отправке уведомлений: ${err.message}`);
         });
       }, 5000);
     }
+    
+    // Если были успешные отправки, отправляем еще раз через 10 секунд для надежности
+    // (особенно важно для iOS, где уведомления могут не доставляться с первого раза)
+    if (successful > 0 && payload.sosId && !payload.isReminder) {
+      logWithTime('Планируем повторную отправку через 10 секунд для надежности');
+      setTimeout(() => {
+        // Изменяем немного текст, чтобы обойти группировку уведомлений
+        const reminderPayload = {
+          ...payload,
+          title: payload.title || 'Внимание! SOS (напоминание)',
+          body: (payload.body || 'Поступил SOS-вызов') + ' (напоминание)',
+          isReminder: true
+        };
+        sendPushToGuards(reminderPayload).catch(err => {
+          logWithTime(`Ошибка при отправке напоминания: ${err.message}`);
+        });
+      }, 10000);
+      
+      // Для iOS отправляем еще одно напоминание через 30 секунд
+      // iOS часто блокирует уведомления, если они приходят слишком часто
+      if (guardSubscriptions.some(sub => sub.platform === 'ios')) {
+        logWithTime('Планируем дополнительное напоминание для iOS через 30 секунд');
+        setTimeout(() => {
+          const iosReminderPayload = {
+            ...payload,
+            title: payload.title || 'Срочно! SOS (повторно)',
+            body: (payload.body || 'Поступил SOS-вызов') + ' (требуется внимание)',
+            isReminder: true,
+            iosSpecific: true
+          };
+          
+          // Отправляем только на iOS устройства
+          PushSubscription.find({ role: 'guard', platform: 'ios' })
+            .then(iosSubscriptions => {
+              if (iosSubscriptions.length > 0) {
+                logWithTime(`Отправка дополнительного напоминания на ${iosSubscriptions.length} iOS устройств`);
+                
+                const sendPromises = iosSubscriptions.map(sub => {
+                  const pushOptions = {
+                    vapidDetails: {
+                      subject: 'mailto:admin@1fxpro.vip',
+                      publicKey: vapidKeys.publicKey,
+                      privateKey: vapidKeys.privateKey
+                    },
+                    TTL: 60 * 60,
+                    urgency: 'high',
+                    headers: {
+                      'content-available': '1',
+                      'mutable-content': '1',
+                      'X-Notification-Category': 'sos'
+                    }
+                  };
+                  
+                  return webPush.sendNotification(
+                    sub.subscription, 
+                    JSON.stringify({
+                      ...JSON.parse(notificationPayload),
+                      title: iosReminderPayload.title,
+                      body: iosReminderPayload.body,
+                      tag: 'sos-notification-reminder',
+                      timestamp: Date.now()
+                    }),
+                    pushOptions
+                  ).catch(err => {
+                    logWithTime(`Ошибка отправки iOS напоминания для ${sub._id}: ${err.message}`);
+                  });
+                });
+                
+                Promise.all(sendPromises)
+                  .then(() => logWithTime('Дополнительное iOS напоминание отправлено'))
+                  .catch(err => logWithTime(`Ошибка отправки iOS напоминаний: ${err.message}`));
+              }
+            })
+            .catch(err => {
+              logWithTime(`Ошибка поиска iOS подписок: ${err.message}`);
+            });
+        }, 30000);
+      }
+    }
   } catch (err) {
-    logWithTime(`Ошибка при отправке push-уведомлений: ${err.message}`);
+    logWithTime(`Ошибка при отправке уведомлений: ${err.message}`);
   }
 }
 

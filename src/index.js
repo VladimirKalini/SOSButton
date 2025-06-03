@@ -25,12 +25,18 @@ if ('serviceWorker' in navigator) {
       const platform = getPlatform();
       console.log(`Платформа: ${platform}`);
       
-      // Регистрируем сервис-воркер
+      // Регистрируем сервис-воркер с опцией updateViaCache: 'none' для принудительного обновления
       const registration = await navigator.serviceWorker.register('/service-worker.js', {
         scope: '/',
         updateViaCache: 'none'
       });
       console.log('Service Worker зарегистрирован:', registration);
+      
+      // Принудительно обновляем service worker, если он уже установлен
+      if (registration.waiting) {
+        console.log('Найден ожидающий service worker, активируем его');
+        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
       
       // Запрашиваем разрешение на показ уведомлений
       if ('Notification' in window) {
@@ -47,30 +53,82 @@ if ('serviceWorker' in navigator) {
               // Создаем новую подписку
               const publicVapidKey = 'BLBz4TFiSfAM9qfyX3GJQrHXqUAzTVJ6UQzADDw_wXJYdqi_Z3X6eRLTZuNnTwAZrUU7hjHyRwrNfwOxGwODnxA';
               
+              // Преобразуем VAPID ключ для использования в подписке
+              const applicationServerKey = urlBase64ToUint8Array(publicVapidKey);
+              
+              // Создаем подписку с явным указанием userVisibleOnly: true
               subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+                applicationServerKey: applicationServerKey
               });
               
               console.log('Создана новая push-подписка:', subscription);
               
               // Отправляем подписку на сервер для сохранения
               const role = localStorage.getItem('userRole') || 'user';
-              await axios.post('/api/save-subscription', { 
-                subscription, 
-                role 
-              });
-              console.log('Подписка отправлена на сервер');
+              try {
+                const response = await axios.post('/api/save-subscription', { 
+                  subscription, 
+                  role 
+                });
+                console.log('Подписка отправлена на сервер:', response.data);
+              } catch (serverErr) {
+                console.error('Ошибка отправки подписки на сервер:', serverErr);
+                // Повторная попытка отправки через 5 секунд
+                setTimeout(async () => {
+                  try {
+                    const retryResponse = await axios.post('/api/save-subscription', { 
+                      subscription, 
+                      role 
+                    });
+                    console.log('Повторная отправка подписки успешна:', retryResponse.data);
+                  } catch (retryErr) {
+                    console.error('Повторная отправка подписки не удалась:', retryErr);
+                  }
+                }, 5000);
+              }
             } else {
               console.log('Используется существующая push-подписка:', subscription);
               
               // Обновляем подписку на сервере
               const role = localStorage.getItem('userRole') || 'user';
-              await axios.post('/api/save-subscription', { 
-                subscription, 
-                role 
-              });
-              console.log('Существующая подписка обновлена на сервере');
+              try {
+                const response = await axios.post('/api/save-subscription', { 
+                  subscription, 
+                  role 
+                });
+                console.log('Существующая подписка обновлена на сервере:', response.data);
+              } catch (serverErr) {
+                console.error('Ошибка обновления подписки на сервере:', serverErr);
+                
+                // Если ошибка, пробуем пересоздать подписку
+                if (platform === 'android' || platform === 'ios') {
+                  console.log('Пробуем пересоздать подписку для мобильного устройства');
+                  try {
+                    // Отменяем текущую подписку
+                    await subscription.unsubscribe();
+                    console.log('Старая подписка отменена');
+                    
+                    // Создаем новую подписку
+                    const publicVapidKey = 'BLBz4TFiSfAM9qfyX3GJQrHXqUAzTVJ6UQzADDw_wXJYdqi_Z3X6eRLTZuNnTwAZrUU7hjHyRwrNfwOxGwODnxA';
+                    const newSubscription = await registration.pushManager.subscribe({
+                      userVisibleOnly: true,
+                      applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+                    });
+                    
+                    console.log('Пересоздана push-подписка:', newSubscription);
+                    
+                    // Отправляем новую подписку на сервер
+                    const newResponse = await axios.post('/api/save-subscription', { 
+                      subscription: newSubscription, 
+                      role 
+                    });
+                    console.log('Новая подписка отправлена на сервер:', newResponse.data);
+                  } catch (recreateErr) {
+                    console.error('Ошибка пересоздания подписки:', recreateErr);
+                  }
+                }
+              }
             }
           } catch (err) {
             console.error('Ошибка подписки на push-уведомления:', err);
@@ -105,7 +163,8 @@ if ('serviceWorker' in navigator) {
       setTimeout(() => {
         if (registration.active) {
           registration.active.postMessage({
-            action: 'send-test-notification'
+            action: 'send-test-notification',
+            platform: platform
           });
         }
       }, 5000);

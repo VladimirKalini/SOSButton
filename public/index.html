@@ -23,6 +23,9 @@
     <meta name="msapplication-navbutton-color" content="#ff3b30" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     
+    <!-- Специальный мета-тег для Web Push -->
+    <meta name="vapid-key" content="BLBz4TFiSfAM9qfyX3GJQrHXqUAzTVJ6UQzADDw_wXJYdqi_Z3X6eRLTZuNnTwAZrUU7hjHyRwrNfwOxGwODnxA" />
+    
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <link rel="preload" href="%PUBLIC_URL%/offline.html" as="document" />
@@ -60,5 +63,8 @@
     
     <!-- Предзагрузка аудио для быстрого воспроизведения -->
     <audio id="preload-siren" src="%PUBLIC_URL%/siren.mp3" preload="auto" style="display:none;"></audio>
+    
+    <!-- Скрипт для нативных push-уведомлений -->
+    <script src="%PUBLIC_URL%/push-helper.js"></script>
   </body>
 </html>
