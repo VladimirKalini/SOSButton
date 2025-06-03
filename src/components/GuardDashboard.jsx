@@ -1,4 +1,4 @@
-// src/components/guard/GuardDashboard.jsx
+// src/components/GuardDashboard.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -46,6 +46,57 @@ const GuardDashboard = () => {
     // Инициализируем аудио-контекст для лучшей работы на мобильных устройствах
     initAudioContext().catch(err => console.error('Ошибка инициализации аудио:', err));
     
+    // Регистрируем роль охранника для push-уведомлений
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then(registration => {
+          // Сохраняем роль в localStorage
+          localStorage.setItem('userRole', 'guard');
+          
+          // Запрашиваем разрешение на уведомления
+          return Notification.requestPermission().then(permission => {
+            if (permission === 'granted') {
+              // Получаем существующую подписку или создаем новую
+              return registration.pushManager.getSubscription()
+                .then(subscription => {
+                  if (subscription) {
+                    // Отправляем существующую подписку на сервер
+                    return axios.post('/api/save-subscription', {
+                      subscription,
+                      role: 'guard'
+                    });
+                  } else {
+                    // Получаем VAPID ключ из конфигурации
+                    const vapidPublicKey = 'BLBz4TFiSfAM9qfyX3GJQrHXqUAzTVJ6UQzADDw_wXJYdqi_Z3X6eRLTZuNnTwAZrUU7hjHyRwrNfwOxGwODnxA';
+                    
+                    // Создаем новую подписку
+                    return registration.pushManager.subscribe({
+                      userVisibleOnly: true,
+                      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+                    })
+                    .then(newSubscription => {
+                      // Отправляем новую подписку на сервер
+                      return axios.post('/api/save-subscription', {
+                        subscription: newSubscription,
+                        role: 'guard'
+                      });
+                    });
+                  }
+                })
+                .then(() => {
+                  console.log('Push-подписка для охранника сохранена');
+                })
+                .catch(err => {
+                  console.error('Ошибка при подписке на push-уведомления:', err);
+                });
+            }
+          });
+        })
+        .catch(err => {
+          console.error('Ошибка при регистрации push-подписки:', err);
+        });
+    }
+    
     // Добавляем обработчик сообщений от сервис-воркера
     navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
     
@@ -63,6 +114,22 @@ const GuardDashboard = () => {
     };
   }, []);
 
+  // Функция для конвертации base64 в Uint8Array (для applicationServerKey)
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
   // Обработчик сообщений от сервис-воркера
   const handleServiceWorkerMessage = (event) => {
     const { action, data } = event.data || {};
@@ -70,13 +137,13 @@ const GuardDashboard = () => {
     
     if (action === 'accept-sos') {
       // Находим вызов по ID или другим данным
-      const callId = data.id || data.callId;
+      const callId = data.sosId || data.id;
       if (callId) {
         navigate(`/call/${callId}`);
       }
     } else if (action === 'decline-sos') {
       // Находим вызов по ID или другим данным
-      const callId = data.id || data.callId;
+      const callId = data.sosId || data.id;
       if (callId) {
         handleCancelCall(callId);
       }
@@ -85,6 +152,13 @@ const GuardDashboard = () => {
       console.log('Показываем полноэкранный оверлей SOS с данными:', data);
       setCurrentSOSData(data);
       setShowSOSOverlay(true);
+      
+      // Проигрываем сирену
+      if (!isSirenPlaying) {
+        playSiren()
+          .then(() => setIsSirenPlaying(true))
+          .catch(err => console.error('Ошибка воспроизведения сирены:', err));
+      }
     }
   };
 
@@ -427,7 +501,7 @@ const GuardDashboard = () => {
   };
 
   return (
-    <div style={{ 
+    <div className="guard-dashboard" style={{ 
       padding: '1.5rem',
       maxWidth: '1200px',
       margin: '0 auto',
@@ -443,7 +517,7 @@ const GuardDashboard = () => {
         onClose={() => setShowSOSOverlay(false)}
       />
 
-      <div style={{ 
+      <div className="guard-header" style={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center', 
@@ -461,6 +535,7 @@ const GuardDashboard = () => {
         <div style={{ display: 'flex', gap: '1rem' }}>
           {isSirenPlaying && (
             <button 
+              className="guard-button"
               onClick={stopSirenSound} 
               style={{ 
                 padding: '0.75rem 1.5rem', 
@@ -485,6 +560,7 @@ const GuardDashboard = () => {
             </button>
           )}
           <button 
+            className="guard-button"
             onClick={handleLogout} 
             style={{ 
               padding: '0.75rem 1.5rem', 

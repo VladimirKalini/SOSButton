@@ -8,6 +8,15 @@ const callsRoutes = require('./src/routes/calls');
 const Sos = require('./src/models/Sos');
 const fs = require('fs');
 const User = require('./src/models/User');
+const webPush = require('web-push');
+const vapidKeys = require('./src/config/vapidKeys');
+
+// Настройка Web Push
+webPush.setVapidDetails(
+  'mailto:admin@1fxpro.vip',
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
 
 // Создание директории для загрузки видео
 const uploadsDir = path.join(__dirname, 'uploads/videos');
@@ -30,7 +39,7 @@ function logWithTime(message) {
   console.log(logMessage);
   
   // Запись в файл логов
-  const logFile = path.join(logsDir, `webrtc-${new Date().toISOString().split('T')[0]}.log`);
+  const logFile = path.join(logsDir, `app-${new Date().toISOString().split('T')[0]}.log`);
   fs.appendFileSync(logFile, logMessage + '\n');
 }
 
@@ -43,6 +52,15 @@ mongoose
     logWithTime(`MongoDB connection error: ${err.message}`);
     process.exit(1);
   });
+
+// Создаем схему и модель для подписок на push-уведомления
+const pushSubscriptionSchema = new mongoose.Schema({
+  subscription: Object,
+  role: { type: String, enum: ['user', 'guard'], default: 'user' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const PushSubscription = mongoose.model('PushSubscription', pushSubscriptionSchema);
 
 // Создание Express приложения и HTTP сервера
 const app = express();
@@ -72,12 +90,102 @@ app.get('/api/status', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    webrtc: {
-      activeConnections: activeConnections.size,
-      pendingIceCandidates: pendingIceCandidates.size
+    webpush: {
+      subscriptions: {
+        total: 0, // Будет обновлено после запроса к БД
+        guards: 0
+      }
     }
   });
+  
+  // Асинхронно обновляем статистику подписок
+  PushSubscription.countDocuments()
+    .then(total => {
+      return PushSubscription.countDocuments({ role: 'guard' })
+        .then(guards => {
+          logWithTime(`Всего подписок: ${total}, охранников: ${guards}`);
+        });
+    })
+    .catch(err => logWithTime(`Ошибка подсчета подписок: ${err.message}`));
 });
+
+// Маршрут для сохранения push-подписки
+app.post('/api/save-subscription', async (req, res) => {
+  try {
+    const { subscription, role } = req.body;
+    
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ error: 'Некорректные данные подписки' });
+    }
+    
+    // Проверяем, существует ли уже такая подписка
+    const existingSubscription = await PushSubscription.findOne({
+      'subscription.endpoint': subscription.endpoint
+    });
+    
+    if (existingSubscription) {
+      // Обновляем существующую подписку
+      existingSubscription.subscription = subscription;
+      existingSubscription.role = role || existingSubscription.role;
+      await existingSubscription.save();
+      logWithTime(`Обновлена push-подписка для ${role}`);
+      return res.status(200).json({ message: 'Подписка обновлена' });
+    } else {
+      // Создаем новую подписку
+      const newSubscription = new PushSubscription({
+        subscription,
+        role: role || 'user'
+      });
+      await newSubscription.save();
+      logWithTime(`Создана новая push-подписка для ${role}`);
+      return res.status(201).json({ message: 'Подписка создана' });
+    }
+  } catch (err) {
+    logWithTime(`Ошибка сохранения push-подписки: ${err.message}`);
+    return res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Функция для отправки push-уведомлений охране
+async function sendPushToGuards(payload = {}) {
+  try {
+    // Получаем все подписки охранников
+    const guardSubscriptions = await PushSubscription.find({ role: 'guard' });
+    logWithTime(`Найдено ${guardSubscriptions.length} подписок охранников для отправки push`);
+    
+    if (guardSubscriptions.length === 0) {
+      logWithTime('Нет подписок охранников для отправки push-уведомлений');
+      return;
+    }
+    
+    // Формируем данные уведомления
+    const notificationPayload = JSON.stringify({
+      title: payload.title || 'Внимание! SOS',
+      body: payload.body || 'Поступил SOS-вызов',
+      icon: '/icons/sos.png',
+      sosId: payload.sosId,
+      url: payload.url || '/'
+    });
+    
+    // Отправляем уведомления всем охранникам
+    const sendPromises = guardSubscriptions.map(sub => {
+      return webPush.sendNotification(sub.subscription, notificationPayload)
+        .catch(err => {
+          logWithTime(`Ошибка отправки push-уведомления: ${err.message}`);
+          
+          // Если подписка недействительна, удаляем её
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            return PushSubscription.deleteOne({ _id: sub._id });
+          }
+        });
+    });
+    
+    await Promise.all(sendPromises);
+    logWithTime('Push-уведомления отправлены охранникам');
+  } catch (err) {
+    logWithTime(`Ошибка при отправке push-уведомлений: ${err.message}`);
+  }
+}
 
 // Статические файлы
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -98,7 +206,6 @@ app.use((req, res, next) => {
 
 // Отслеживание активных соединений
 const activeConnections = new Map();
-const pendingIceCandidates = new Map(); // Хранение ICE кандидатов до создания комнаты
 
 // Обработка Socket.IO соединений
 io.on('connection', socket => {
@@ -132,16 +239,6 @@ io.on('connection', socket => {
           
           // Оповещаем всех в комнате о присоединении
           socket.to(room).emit('user-joined', { id: socket.id, type: 'client' });
-          
-          // Если есть ожидающие ICE кандидаты для этой комнаты, отправляем их
-          if (pendingIceCandidates.has(room)) {
-            const candidates = pendingIceCandidates.get(room);
-            candidates.forEach(candidate => {
-              socket.to(room).emit('ice-candidate', candidate);
-              logWithTime(`Отправлен отложенный ICE кандидат для комнаты ${room}`);
-            });
-            pendingIceCandidates.delete(room);
-          }
         }
       }).catch(err => {
         logWithTime(`Ошибка при проверке SOS ID: ${err.message}`);
@@ -150,9 +247,9 @@ io.on('connection', socket => {
   });
 
   // Обработка SOS сигнала
-  socket.on('sos-offer', async ({ offer, latitude, longitude, phone, reconnect, sosId: existingSosId }) => {
+  socket.on('sos-offer', async ({ latitude, longitude, phone, reconnect, sosId: existingSosId }) => {
     try {
-      logWithTime(`Получен SOS offer от ${phone}`);
+      logWithTime(`Получен SOS от ${phone}`);
       
       // Если это переподключение существующего вызова
       if (reconnect && existingSosId) {
@@ -161,22 +258,25 @@ io.on('connection', socket => {
         // Находим существующий вызов
         const existingSos = await Sos.findOne({ sosId: existingSosId });
         if (existingSos) {
-          // Обновляем offer
-          existingSos.offer = offer;
-          await existingSos.save();
-          
           // Присоединяем клиента к комнате с ID вызова
           socket.join(existingSosId);
           
           // Оповещаем охрану о переподключении
           socket.to('guard').emit('sos-reconnect', {
-            offer,
             id: existingSosId
           });
           
           // Отправляем подтверждение клиенту
           socket.emit('sos-saved', { id: existingSosId });
           logWithTime(`Переподключение SOS ${existingSosId} обработано`);
+          
+          // Отправляем push-уведомления охране
+          await sendPushToGuards({
+            title: 'Внимание! SOS',
+            body: `Переподключение SOS-вызова от ${existingSos.userName || phone}`,
+            sosId: existingSosId
+          });
+          
           return;
         } else {
           logWithTime(`Существующий SOS ${existingSosId} не найден, создаем новый`);
@@ -188,7 +288,7 @@ io.on('connection', socket => {
       const userName = user ? user.name : 'Неизвестный пользователь';
       
       // Создание нового SOS вызова
-      const doc = new Sos({ phone, userName, latitude, longitude, offer });
+      const doc = new Sos({ phone, userName, latitude, longitude });
       await doc.save();
       doc.sosId = doc._id.toString();
       await doc.save();
@@ -209,7 +309,6 @@ io.on('connection', socket => {
       
       // Оповещение охраны о новом вызове
       socket.to('guard').emit('incoming-sos', {
-        offer,
         latitude,
         longitude,
         phone,
@@ -219,78 +318,16 @@ io.on('connection', socket => {
       });
       
       logWithTime(`Оповещение о новом SOS отправлено охране: ${userName} (${phone}), ID: ${doc.sosId}`);
-    } catch (err) {
-      logWithTime(`Ошибка при обработке SOS offer: ${err.message}`);
-      socket.emit('error', { message: 'Не удалось сохранить SOS сигнал' });
-    }
-  });
-
-  // Обработка ответа на SOS
-  socket.on('sos-answer', ({ answer, id }) => {
-    logWithTime(`Получен ответ на SOS ${id}`);
-    
-    // Отправляем ответ в комнату с ID вызова
-    socket.to(id).emit('sos-answer', { answer });
-    
-    // Обновляем информацию о соединении
-    if (activeConnections.has(socket.id)) {
-      const connection = activeConnections.get(socket.id);
-      connection.sosId = id;
-      activeConnections.set(socket.id, connection);
-    }
-    
-    logWithTime(`Ответ отправлен клиенту SOS ${id}`);
-  });
-
-  // Обработка ICE кандидатов
-  socket.on('ice-candidate', ({ candidate, id }) => {
-    logWithTime(`Получен ICE кандидат для ${id} (тип: ${candidate?.candidate ? candidate.candidate.split(' ')[7] : 'неизвестный'})`);
-    
-    // Проверяем, существует ли комната
-    const room = io.sockets.adapter.rooms.get(id);
-    if (room && room.size > 1) {
-      socket.to(id).emit('ice-candidate', candidate);
-      logWithTime(`ICE кандидат отправлен для ${id}, размер комнаты: ${room.size}`);
       
-      // Логируем информацию о кандидате
-      if (candidate && candidate.candidate) {
-        const candidateInfo = candidate.candidate.split(' ');
-        if (candidateInfo.length > 7) {
-          const candidateType = candidateInfo[7]; // srflx (STUN), host, relay (TURN)
-          logWithTime(`Тип ICE кандидата: ${candidateType}`);
-        }
-      }
-    } else {
-      logWithTime(`Комната ${id} не существует или имеет только одного участника (размер: ${room ? room.size : 0})`);
-      
-      // Сохраняем ICE кандидат для последующей отправки
-      if (!pendingIceCandidates.has(id)) {
-        pendingIceCandidates.set(id, []);
-      }
-      pendingIceCandidates.get(id).push(candidate);
-      logWithTime(`ICE кандидат сохранен для последующей отправки в комнату ${id}`);
-      
-      // Создаем комнату, если она не существует
-      socket.join(id);
-      logWithTime(`Socket ${socket.id} присоединился к комнате: ${id}`);
-      
-      // Проверяем, есть ли активные соединения для этой комнаты
-      let roomConnections = 0;
-      activeConnections.forEach(conn => {
-        if (conn.sosId === id) {
-          roomConnections++;
-        }
+      // Отправляем push-уведомления охране
+      await sendPushToGuards({
+        title: 'Внимание! SOS',
+        body: `Поступил SOS-вызов от ${userName || phone}`,
+        sosId: doc.sosId
       });
-      logWithTime(`Активных соединений для комнаты ${id}: ${roomConnections}`);
-      
-      // Если есть охранники, отправляем им уведомление о необходимости присоединиться к комнате
-      const guards = Array.from(activeConnections.values()).filter(conn => conn.type === 'guard');
-      if (guards.length > 0) {
-        logWithTime(`Отправляем напоминание ${guards.length} охранникам о необходимости присоединиться к комнате ${id}`);
-        socket.to('guard').emit('sos-reminder', { id });
-      } else {
-        logWithTime('Нет активных охранников для отправки напоминания');
-      }
+    } catch (err) {
+      logWithTime(`Ошибка при обработке SOS: ${err.message}`);
+      socket.emit('error', { message: 'Не удалось сохранить SOS сигнал' });
     }
   });
 

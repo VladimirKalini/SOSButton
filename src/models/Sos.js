@@ -6,7 +6,6 @@ const sosSchema = new mongoose.Schema({
   userName:  String,
   latitude:  Number,
   longitude: Number,
-  offer:     Object,
   sosId:     String,
   status:    { type: String, default: 'active' },
   videoPath: String,

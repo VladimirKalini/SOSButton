@@ -254,3 +254,75 @@ p, li, td, th {
     width: 100%;
   }
 }
+
+/* Добавляю стили для адаптивного дизайна страницы охраны */
+
+/* Адаптивные стили для панели охраны */
+.guard-dashboard {
+  display: flex;
+  flex-direction: column;
+}
+
+.guard-card,
+.guard-map {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.guard-header {
+  font-size: 1.5em;
+}
+
+.guard-button {
+  padding: 12px 24px;
+  font-size: 1em;
+}
+
+/* Медиазапрос для мобильных устройств */
+@media (max-width: 768px) {
+  .guard-dashboard {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .guard-card,
+  .guard-map {
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  
+  .guard-header {
+    font-size: 1.2em;
+  }
+  
+  .guard-button {
+    padding: 12px 20px;
+    font-size: 1em;
+  }
+  
+  /* Уменьшаем отступы на мобильных устройствах */
+  .guard-dashboard {
+    padding: 0.75rem;
+  }
+  
+  /* Адаптируем заголовок */
+  .guard-header h2 {
+    font-size: 1.5rem;
+  }
+  
+  /* Адаптируем кнопки */
+  .guard-header > div {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  /* Адаптируем таблицы */
+  table {
+    font-size: 0.9em;
+  }
+  
+  /* Скрываем некоторые колонки в таблицах на мобильных */
+  .mobile-hidden {
+    display: none;
+  }
+}

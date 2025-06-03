@@ -26,7 +26,7 @@ if ('serviceWorker' in navigator) {
       console.log(`Платформа: ${platform}`);
       
       // Регистрируем сервис-воркер
-      const registration = await navigator.serviceWorker.register('/sw.js', {
+      const registration = await navigator.serviceWorker.register('/service-worker.js', {
         scope: '/',
         updateViaCache: 'none'
       });
@@ -54,10 +54,23 @@ if ('serviceWorker' in navigator) {
               
               console.log('Создана новая push-подписка:', subscription);
               
-              // Здесь можно отправить подписку на сервер для сохранения
-              // await axios.post('/api/push/subscribe', { subscription });
+              // Отправляем подписку на сервер для сохранения
+              const role = localStorage.getItem('userRole') || 'user';
+              await axios.post('/api/save-subscription', { 
+                subscription, 
+                role 
+              });
+              console.log('Подписка отправлена на сервер');
             } else {
               console.log('Используется существующая push-подписка:', subscription);
+              
+              // Обновляем подписку на сервере
+              const role = localStorage.getItem('userRole') || 'user';
+              await axios.post('/api/save-subscription', { 
+                subscription, 
+                role 
+              });
+              console.log('Существующая подписка обновлена на сервере');
             }
           } catch (err) {
             console.error('Ошибка подписки на push-уведомления:', err);
