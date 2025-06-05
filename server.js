@@ -13,7 +13,7 @@ const vapidKeys = require('./src/config/vapidKeys');
 
 // Настройка Web Push
 webPush.setVapidDetails(
-  'mailto:admin@1fxpro.vip',
+  'mailto:admin@novyy-gorizont-sos.com',
   vapidKeys.publicKey,
   vapidKeys.privateKey
 );
@@ -297,7 +297,7 @@ async function sendPushToGuards(payload = {}) {
           // Настраиваем опции отправки
           const pushOptions = {
             vapidDetails: {
-              subject: 'mailto:admin@1fxpro.vip',
+              subject: 'mailto:admin@novyy-gorizont-sos.com',
               publicKey: vapidKeys.publicKey,
               privateKey: vapidKeys.privateKey
             },

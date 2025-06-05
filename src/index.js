@@ -7,7 +7,7 @@ import { getPlatform } from './services/platformConfig';
 import axios from 'axios';
 
 // Устанавливаем базовый URL для axios
-axios.defaults.baseURL = 'https://1fxpro.vip';
+axios.defaults.baseURL = 'https://novyy-gorizont-sos.com';
 
 // 1) Рендерим React-приложение
 const root = ReactDOM.createRoot(document.getElementById('root'));
