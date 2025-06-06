@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 
-export function SOSButton({ token, userPhone, serverUrl = 'https://1fxpro.vip' }) {
+export function SOSButton({ token, userPhone, serverUrl = 'https://novyy-gorizont-sos.com' }) {
   const socketRef = useRef(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');

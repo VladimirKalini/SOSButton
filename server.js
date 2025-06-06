@@ -412,7 +412,7 @@ async function sendPushToGuards(payload = {}) {
                 const sendPromises = iosSubscriptions.map(sub => {
                   const pushOptions = {
                     vapidDetails: {
-                      subject: 'mailto:admin@1fxpro.vip',
+                      subject: 'mailto:admin@novyy-gorizont-sos.com',
                       publicKey: vapidKeys.publicKey,
                       privateKey: vapidKeys.privateKey
                     },

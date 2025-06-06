@@ -34,7 +34,7 @@ export default function Dashboard() {
         })
     }
 
-    const socket = io('https://1fxpro.vip', { auth: { token }, transports: ['websocket'] })
+    const socket = io('https://novyy-gorizont-sos.com', { auth: { token }, transports: ['websocket'] })
     socket.emit('join-room', user.role === 'guard' ? 'moderators' : user.phone)
 
     socket.on('incoming-sos', sos => {

@@ -21,7 +21,7 @@ const GuardDashboard = () => {
   const [activeTab, setActiveTab] = useState('active');
   const [page, setPage] = useState(1);
   const { token, logout } = useAuth();
-  const serverUrl = 'https://1fxpro.vip';
+  const serverUrl = 'https://novyy-gorizont-sos.com';
   const [notification, setNotification] = useState({ show: false, message: '', type: '' });
   const audioRef = useRef(null);
   const [isSirenPlaying, setIsSirenPlaying] = useState(false);

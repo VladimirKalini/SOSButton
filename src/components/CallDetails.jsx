@@ -13,7 +13,7 @@ const CallDetails = () => {
   const [callData, setCallData] = useState(null);
   const [debugInfo, setDebugInfo] = useState([]);
   const socketRef = useRef(null);
-  const serverUrl = 'https://1fxpro.vip';
+  const serverUrl = 'https://novyy-gorizont-sos.com';
 
   // Функция для добавления отладочной информации
   const addDebugInfo = (message) => {
