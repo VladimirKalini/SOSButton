@@ -1,15 +1,14 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const mongoose = require('mongoose');
-// Настройка strictQuery для устранения предупреждений - устанавливаем сразу после импорта
-mongoose.set('strictQuery', false);
+const fs = require('fs');
 const { Server } = require('socket.io');
+
+// Импортируем модели и настроенный mongoose из централизованного файла
+const { mongoose, User, Sos } = require('./src/models/index');
+
 const authRoutes = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
-const Sos = require('./src/models/Sos');
-const fs = require('fs');
-const User = require('./src/models/User');
 const webPush = require('web-push');
 const vapidKeys = require('./src/config/vapidKeys');
 
