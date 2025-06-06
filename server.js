@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const mongoose = require('mongoose');
+// Настройка strictQuery для устранения предупреждений - устанавливаем сразу после импорта
+mongoose.set('strictQuery', false);
 const { Server } = require('socket.io');
 const authRoutes = require('./src/routes/auth');
 const callsRoutes = require('./src/routes/calls');
@@ -45,9 +47,6 @@ function logWithTime(message) {
 
 // Подключение к MongoDB
 const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/sos-app';
-
-// Настройка strictQuery для устранения предупреждений
-mongoose.set('strictQuery', false);
 
 mongoose
   .connect(mongoUri)
