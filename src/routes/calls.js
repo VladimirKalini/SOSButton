@@ -52,8 +52,16 @@ router.get('/active', roleMiddleware('guard'), async (req, res) => {
 // Получить детали конкретного вызова (только охрана)
 router.get('/:id', roleMiddleware('guard'), async (req, res) => {
   try {
-    const sos = await Sos.findById(req.params.id);
+    // Сначала пробуем найти по MongoDB ID
+    let sos = await Sos.findById(req.params.id);
+    
+    // Если не нашли, пробуем найти по sosId
     if (!sos) {
+      sos = await Sos.findOne({ sosId: req.params.id });
+    }
+    
+    if (!sos) {
+      console.error(`SOS-вызов не найден: ${req.params.id}`);
       return res.status(404).json({ message: 'SOS-вызов не найден' });
     }
     res.json(sos);
