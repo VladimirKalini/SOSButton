@@ -45,6 +45,10 @@ function logWithTime(message) {
 
 // Подключение к MongoDB
 const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/sos-app';
+
+// Настройка strictQuery для устранения предупреждений
+mongoose.set('strictQuery', false);
+
 mongoose
   .connect(mongoUri)
   .then(() => logWithTime('MongoDB connected'))
